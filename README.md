@@ -8,21 +8,21 @@
 </p>
 
 Self-contained recipe for serving the `Mia-AiLab/Qwen3.8-Flash-Next-NVFP4`
-checkpoint (99 GB) from a single DGX Spark's 121 GiB unified memory, via vLLM
+checkpoint (99 GiB) from a single DGX Spark's 121 GiB unified memory, via vLLM
 with the PLE table offloaded and memory-mapped. This is a **vision-language**
 model: text, images and video all work out of the box (see below). Nothing here depends on the
 2-node files it was derived from.
 
 ```
 cp .env.sample .env        # edit IMAGE / HF_TOKEN if needed
-./download.sh              # fetch the ~99 GB checkpoint (resumable)
+./download.sh              # fetch the ~99 GiB checkpoint (resumable)
 ./start.sh                 # ~10-12 min to /health; serves on :8888
 ./stop.sh                  # container + watchdog, graceful
 ```
 
 `start.sh` never downloads anything — it resolves the checkpoint from the local
 Hugging Face cache and fails fast if it is absent. Budget ~130 GiB of free disk:
-99 GB for the checkpoint plus the ~27 GB packed PLE table built on first launch.
+99 GiB for the checkpoint plus the ~27 GiB packed PLE table built on first launch.
 
 `./start.sh --no-launch` prints the derived memory budget and the docker
 command without running anything. `./stop.sh` sends SIGTERM and waits up to
@@ -412,6 +412,58 @@ above was measured on — decode, prefill and the 45-minute soak all ran at
 `YARN=1`. It is the shipped **262k native-rope** profile that has not been
 benchmarked end to end.
 
+### Abliterated checkpoint (`ABLIT`)
+
+`ABLIT=0` serves the stock Mia NVFP4 checkpoint. `ABLIT=1` serves the gated
+Keys checkpoint
+[`drowzeys/keys-Qwen3.8-flash-next-ablit-Mia-Single-Spark-only`](https://huggingface.co/drowzeys/keys-Qwen3.8-flash-next-ablit-Mia-Single-Spark-only):
+the same Mia 34-shard layout with QSA `self_attn.o_proj` replaced at layers
+15, 19, 23, 27, 31, 35, 39, 43 and 47. MTP, PLE, routed experts and the chat
+template stay stock. It is valid **only** on this recipe — do not use it with
+other NVFP4 / FP8 / BF16 / GGUF trees.
+
+Both checkpoints are **byte-for-byte the same size** (105,879,543,020 bytes of
+safetensors): `o_proj` is a fixed-shape `F8_E4M3 [2560, 6144]` tensor, so
+rewriting its values changes content, not length. 9 of the 37 shards differ —
+exactly the ones holding the 9 edited layers. The download is still the full
+snapshot, because Hugging Face's terms gate applies to the whole repo.
+
+That Hugging Face repo is **gated**. Set `HF_TOKEN`, **Accept the terms on that
+page**, then download the **full** snapshot (~99 GiB):
+
+```
+# 1. uncomment HF_TOKEN in .env
+# 2. in the browser: accept the terms on the repo page
+ABLIT=1 ./download.sh          # or set ABLIT=1 in .env first
+ABLIT=1 ./start.sh
+```
+
+`HF_TOKEN` is required for `ABLIT=1`. A 403 means access has not been granted
+yet — **Accept the terms on that page**, then retry with `HF_TOKEN` set. Stock
+and ablit caches sit side by side; flipping `ABLIT` is the only switch. The
+packed PLE table is reused from stock (those shards are unchanged), so
+`start.sh` does not rebuild the 27 GiB table.
+
+**The gate is a binding agreement, not a download button.** The checkpoint
+ships its own `RESPONSIBLE_USE.md`, and requesting access means accepting it.
+In summary: you must be 18 or older, you state your intended use on the request
+form, and the terms prohibit sexual content involving minors, material
+promoting self-harm or suicide, harassment, doxxing or fraud targeting real
+people, anything illegal in your jurisdiction, and any use barred by the
+upstream Qwen Community License. The weights are provided as-is with no
+warranty and inherit their licence from the upstream Qwen base model. Read
+`RESPONSIBLE_USE.md` and `COMPATIBILITY.md` in the repo before requesting
+access — this paragraph is a summary, and the repo's own terms are what bind.
+
+Safety refusals are removed in this checkpoint, which moves the guardrails onto
+you: filtering, human review and access control are yours to supply. That
+matters more here than on stock, because `start.sh` binds the server to
+`0.0.0.0` — anything that can reach the port can reach an unfiltered model.
+
+The abliteration splice is by **Keys (drowzeys)**, built on MiaAI Lab's
+single-Spark NVFP4 recipe over Qwen/Alibaba's Qwen3.8-Flash-Next. See the
+checkpoint's `CREDITS.md`, and [Credits](#credits) below.
+
 ### Reasoning is on by default
 
 This build reasons before answering, and `start.sh` passes
@@ -622,7 +674,7 @@ Each of these cost a hard host hang or a dead server during bring-up.
 - **`comfy-h3.service` must stay disabled.** It polls `127.0.0.1:8888` and
   launches ComfyUI (a GPU co-tenant) as soon as anything answers there.
   `start.sh` refuses port 8888 while that service is active.
-- **Never set `PLE_OFFLOAD=false` at TP=1** — 99 GB through UVM hangs the host.
+- **Never set `PLE_OFFLOAD=false` at TP=1** — 99 GiB through UVM hangs the host.
 - **The stock QSA backend refuses FP8 KV** (`supported_kv_cache_dtypes =
   ["auto","bfloat16"]`). `patch_qsa_fp8_kv.py` in this repo adds it; without
   that patch `KV_CACHE_DTYPE=fp8` cannot work, and reading a quantised cache
@@ -730,8 +782,9 @@ buffer or missing quant scales) — see the patch notes below.
 ## Layout
 
 - `download.sh` — fetches the checkpoint into the Hugging Face cache
-  (resumable; honours `HF_TOKEN` for gated repos). Uses the host's
-  `huggingface_hub` if present, otherwise the container image.
+  (resumable; honours `HF_TOKEN` for gated repos). `ABLIT=1` downloads the
+  full Keys ablit snapshot after you accept the Hugging Face terms. Uses the
+  host's `huggingface_hub` if present, otherwise the container image.
 - `start.sh` — launcher: derives the GPU budget from live memory under the
   `HOST_RESERVE_GIB` cap, builds the packed PLE table on first run,
   regenerates the patched vLLM files, archives the previous run's logs, starts
@@ -744,7 +797,7 @@ buffer or missing quant scales) — see the patch notes below.
   copies are not in the repo — `start.sh` extracts them from the image on
   first run. Edit the generators; edits to the generated files are overwritten.
 - `files/build_ple_packed_table.py` — one-time packed PLE table builder
-  (27 GB output under `~/.cache/vllm/ple_cache/`, memory-mapped at runtime).
+  (27 GiB output under `~/.cache/vllm/ple_cache/`, memory-mapped at runtime).
 - `files/sysctl-spark3.conf` — recommended kernel VM tunables, not applied by
   anything here; read its header first.
 
@@ -775,7 +828,7 @@ sparkDash's own figures include any other traffic on the port.
   and deadlocked after graph capture. Replaced with a host-side handshake — the
   GPU worker posts a request, the CPU worker copies and writes a sequence number
   to shared memory, the GPU worker proceeds. It also attaches the memory-mapped
-  packed table instead of loading 27 GB into RAM. The mmap is advised
+  packed table instead of loading 27 GiB into RAM. The mmap is advised
   `MADV_RANDOM`: without it the kernel faults in a ~64 KiB window to serve each
   90-byte row lookup, and measurements here showed **24x** more disk read per
   decoded token (1,366 -> 57 KiB/token) plus ~2 GiB of page cache wasted on
@@ -795,6 +848,22 @@ sparkDash's own figures include any other traffic on the port.
   (Apache-2.0), reimplemented here against this image's own sources. That
   credit applies to this one patch; nothing else in this repository derives
   from that project.
+
+## Credits
+
+- **Qwen / Alibaba** — [Qwen3.8-Flash-Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next),
+  the base model everything here derives from.
+- **MiaAI Lab** — the single-DGX-Spark NVFP4 recipe and
+  [`Mia-AiLab/Qwen3.8-Flash-Next-NVFP4`](https://huggingface.co/Mia-AiLab/Qwen3.8-Flash-Next-NVFP4).
+- **local-inference-lab** — the byte-identical Spark checkpoint used as the
+  splice base.
+- **Keys (drowzeys)** — the abliteration splice served by `ABLIT=1` (QSA
+  `o_proj` at L15–47 in MXFP8; MTP, routed experts, PLE and the chat template
+  left stock) and its packaging.
+- **[lancelind/qwen3.8-Flash-DGX](https://github.com/lancelind/qwen3.8-Flash-DGX)**
+  (Apache-2.0) — the FP8-KV approach behind one patch here, reimplemented
+  against this image's own sources. See
+  [What is patched and why](#what-is-patched-and-why).
 
 ## License
 
@@ -831,3 +900,9 @@ they operate on, each of which carries its own terms:
   dependencies — upstream terms apply.
 - **The model checkpoint** `Mia-AiLab/Qwen3.8-Flash-Next-NVFP4` — weights are
   governed by the checkpoint's own license, not by this repository's.
+- **The abliterated checkpoint**
+  `drowzeys/keys-Qwen3.8-flash-next-ablit-Mia-Single-Spark-only`, served only
+  when you opt in with `ABLIT=1` — gated on Hugging Face behind its own
+  `RESPONSIBLE_USE.md` agreement, with its licence inherited from the upstream
+  Qwen base model. This repository ships a flag that can serve those weights.
+  It does not redistribute them and does not relicense them.
