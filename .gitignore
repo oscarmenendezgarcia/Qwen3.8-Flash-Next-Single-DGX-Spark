@@ -67,3 +67,4 @@
 # --- local: systemd units for this host (see HANDOFF.md) ---
 !/deploy/
 !/deploy/*.service
+!/deploy/*.sh
