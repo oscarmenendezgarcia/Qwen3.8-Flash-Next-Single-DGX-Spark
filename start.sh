@@ -623,7 +623,6 @@ cat > "$LAUNCH_SCRIPT" <<LAUNCH_EOF
 #!/bin/bash
 docker run \\
     -d --name $CONTAINER_NAME \\
-    --restart unless-stopped \\
     --gpus all --network host --ipc host \\
     --cap-add SYS_NICE --cap-add SYS_PTRACE --ulimit memlock=-1 --ulimit stack=67108864 \\
     --memory ${CONTAINER_MEM_GIB}g --memory-swap ${CONTAINER_MEM_GIB}g \\
