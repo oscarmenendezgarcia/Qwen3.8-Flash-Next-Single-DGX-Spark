@@ -113,6 +113,72 @@ output and 24,025 characters of accumulated thread context:
 
 Accents and `ñ` render correctly throughout.
 
+### Two limits of that first pass, found the same day
+
+**It ran at temperature 0. Production runs at 1.0.** The proxy in front of this
+model sets `temperature: 1.0`, so the audit certified a regime nobody uses. At
+temperature 0 the model always takes the most likely token; sampling is where
+occasional slips live. The harness now defaults to 1.0.
+
+**It was blind to orthography.** A user reported the model writing *reescriví*
+for *reescribí* — a b/v confusion, which is the classic Spanish spelling error.
+That output is impeccable Castilian, correctly accented, with no replacement
+characters and no dialect markers: **it passes every language check in this
+harness**. Language identification is not spelling verification.
+
+The harness now checks a list of incorrect b/v forms (`escriv-`, `recivi-`,
+`devería`, `estubo`, `bolver`, `havía`, `ubiera`, …). Only incorrect forms are
+listed; early drafts flagged the correct `anduvo`, and later the correct
+`hacia`, which is worse than not checking at all.
+
+**Be honest about what that check is worth**: across four audits it has
+produced only false positives from its own rules, every one of them a bug in
+the regex. It has never caught a real error. The one confirmed defect was found
+by a user in production. Treat it as an unvalidated safety net, not as evidence
+that the spelling is sound.
+
+Re-tested afterwards with prompts built to force those verbs — 17,081
+characters across six passes at temperature 0 and 1.0 — the b/v error did **not
+reproduce**. Three readings are possible and none of them is "it did not
+happen": an isolated sample at temperature 1.0 is entirely possible and six
+passes would not rule it out; b/v confusion is abundant in Spanish training
+text, so the model has seen it misspelled without any help from a reduced
+vocabulary; and a contribution from the drafter cannot be excluded.
+
+That last one deserves a note, because it bears on section 1. The
+rejection-sampler guarantee quoted there — a draft is kept only if it equals the
+target's argmax — is the **greedy** branch. With temperature above zero the
+verification is probabilistic, and there the draft distribution can influence
+what is accepted. That is a plausible mechanism for a reduced vocabulary to
+affect output, and it is exactly the one missing from section 1. **It is a
+hypothesis. It has not been measured here**, and settling it needs an A/B with
+and without the reduced vocabulary at temperature 1.0.
+
+### Sampling depends on the mode, and mixing them causes language mixing
+
+Qwen publishes **different** settings for the two modes:
+
+| | thinking on | instruct (thinking off) |
+|---|---|---|
+| temperature | 1.0 | **0.7** |
+| top_p | 0.95 | **0.80** |
+| top_k | 20 | 20 |
+| presence_penalty | 0.0 | **1.5** |
+
+The checkpoint's `generation_config.json` carries the **thinking** values, and
+vLLM applies them automatically — the boot log says so. A client that turns
+thinking off without also sending the instruct values therefore runs the
+combination Qwen warns about: *"using a higher value may occasionally result in
+language mixing and a slight decrease in model performance."*
+
+That is not hypothetical here. An audit pass at thinking-off with thinking-mode
+sampling produced one Spanish prompt answered in English, about an unrelated
+topic. It did not reproduce in three retries once the sampling matched the mode.
+
+The harness now selects sampling from the mode. A proxy that pins
+`temperature: 1.0` unconditionally will be correct for thinking traffic and
+wrong for the rest.
+
 **Run it with thinking off.** With thinking on, long prompts spend the entire
 token budget reasoning and `content` returns empty on a perfectly healthy
 server. The README's sanity test warns about this at 200 tokens; it also happens

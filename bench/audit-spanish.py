@@ -19,9 +19,22 @@ print = functools.partial(print, flush=True)
 
 URL, MODEL = "http://127.0.0.1:8890/v1/chat/completions", "qwen3.8-flash-next"
 
-def chat(messages, mt=2000, temp=0.0):
-    body = {"model": MODEL, "messages": messages, "temperature": temp, "max_tokens": mt,
-            "chat_template_kwargs": {"enable_thinking": False}}
+# Qwen publica ajustes DISTINTOS por modo, y mezclarlos es lo que provoca
+# "language mixing" segun su propia advertencia. El generation_config.json del
+# checkpoint lleva los de thinking, asi que con thinking OFF hay que pasar los
+# de instruct explicitamente o se corre la combinacion desaconsejada.
+#   thinking ON : temp 1.0, top_p 0.95, top_k 20, presence_penalty 0.0
+#   thinking OFF: temp 0.7, top_p 0.80, top_k 20, presence_penalty 1.5
+# https://huggingface.co/Qwen/Qwen3.8-Flash-Next
+THINKING = False
+SAMPLING = ({"temperature": 1.0, "top_p": 0.95, "top_k": 20, "presence_penalty": 0.0}
+            if THINKING else
+            {"temperature": 0.7, "top_p": 0.80, "top_k": 20, "presence_penalty": 1.5})
+
+def chat(messages, mt=2000, temp=None):
+    body = {"model": MODEL, "messages": messages, "max_tokens": mt,
+            "chat_template_kwargs": {"enable_thinking": THINKING}, **SAMPLING}
+    if temp is not None: body["temperature"] = temp
     req = urllib.request.Request(URL, json.dumps(body).encode(), {"Content-Type": "application/json"})
     d = json.loads(urllib.request.urlopen(req, timeout=900).read())
     m = d["choices"][0]["message"]; u = d["usage"]
@@ -37,10 +50,26 @@ MARCADORES = {
  "catalan":   [r"\baixò\b", r"\bamb\b", r"\bperò\b", r"\baquest\b", r"\bmés\b"],
  "portugues": [r"\bnão\b", r"\bcomo\bé\b", r"\bvocê\b", r"\bmuito\b", r"\bpalavra\b"],
 }
+# Ortografia. Un "reescrivi" es castellano impecable, sin caracteres rotos y sin
+# marcadores asturianos: pasa todos los filtros de idioma. Se colo por aqui el
+# 2026-09-13 y esta lista existe por eso. Solo formas INCORRECTAS.
+#
+# ESTADO: esta comprobacion NO ha detectado todavia ningun error real. En cuatro
+# auditorias solo ha producido falsos positivos de sus propias reglas ('la',
+# 'el', 'anduvo', 'hacia'), cada uno corregido al aparecer. El unico error
+# confirmado -- "reescrivi" por "reescribi" -- lo encontro un usuario en
+# produccion, no este arnes. Tratarla como red de seguridad sin validar, no
+# como evidencia de que la ortografia esta bien.
+ORTO = [r"\bescriv\w+", r"\breescriv\w+", r"\brecivi\w+", r"\bdeveria\b",
+        r"\bestubo\b", r"\bandubo\b", r"\bavia\b(?! )", r"\bhavia\b",
+        r"\bubiera\b", r"\bboy\b", r"\bbamos\b", r"\bbolver\w*",
+        r"\bprohivi\w+", r"\bconcivi\w+", r"\bexhivi\w+", r"\bmobil\b",
+        r"\baser\b"]
+
 STOP_ES = ["que","de","la","el","en","por","con","para","una","los","del","se","es","al"]
 
 def analiza(txt):
-    """Devuelve (replacement_chars, {idioma: hits}, parrafos_sospechosos)."""
+    """Devuelve (replacement_chars, {idioma: hits}, parrafos_sospechosos, faltas)."""
     roto = txt.count("�")
     low = txt.lower()
     hits = {k: sum(len(re.findall(rx, low)) for rx in v) for k, v in MARCADORES.items()}
@@ -55,7 +84,8 @@ def analiza(txt):
         h = {k: sum(len(re.findall(rx, pl)) for rx in v) for k, v in MARCADORES.items()}
         if stops < 3 or h["asturiano"] > 2 or any(h[k] > 1 for k in ("gallego","catalan","portugues")):
             sosp.append((i, stops, h, par[:110]))
-    return roto, hits, sosp
+    faltas = [m for rx in ORTO for m in re.findall(rx, low)]
+    return roto, hits, sosp, faltas
 
 # --- bateria ---------------------------------------------------------------
 LARGOS = [
@@ -88,13 +118,14 @@ for nombre, p in LARGOS:
         print(f"  {nombre:<18} ERROR {type(e).__name__}"); fallos.append(nombre); continue
     if not txt:
         print(f"  {nombre:<18} {n:>5} {rz:>6}  VACIA"); fallos.append(nombre); continue
-    roto, h, sosp = analiza(txt)
+    roto, h, sosp, faltas = analiza(txt)
     need_acc = nombre == "acentos"
     acc = sum(1 for c in txt if ord(c) > 127)
     ok = roto == 0 and h["asturiano"] <= 2 and all(h[k] <= 1 for k in ("gallego","catalan","portugues")) \
-         and not sosp and (acc > 0 or not need_acc)
+         and not sosp and not faltas and (acc > 0 or not need_acc)
     if not ok: fallos.append(nombre)
     print(f"  {nombre:<18} {n:>5} {rz:>6} {roto:>5} {h['asturiano']:>6} {h['gallego']:>4} {h['catalan']:>4} {h['portugues']:>4}  {'OK' if ok else '*** REVISAR ***'}")
+    if faltas: print(f"      ORTOGRAFIA: {faltas}")
     if sosp:
         for i, st, hh, frag in sosp[:2]:
             print(f"      parrafo {i}: stops_es={st} {hh} :: {frag!r}")
@@ -113,10 +144,11 @@ for t, turno in enumerate(MULTIVUELTA, 1):
     msgs.append({"role":"assistant","content":txt})
     if not txt:
         print(f"  turno {t}: {n:>5} tok, {rz} razon, VACIA"); fallos.append(f"turno{t}"); continue
-    roto, h, sosp = analiza(txt)
-    ok = roto == 0 and h["asturiano"] <= 2 and not sosp
+    roto, h, sosp, faltas = analiza(txt)
+    ok = roto == 0 and h["asturiano"] <= 2 and not sosp and not faltas
     if not ok: fallos.append(f"turno{t}")
     print(f"  turno {t:<2} {n:>5} tok  roto={roto} astur={h['asturiano']} gal={h['gallego']}  {'OK' if ok else '*** REVISAR ***'}")
+    if faltas: print(f"      ORTOGRAFIA: {faltas}")
     if sosp: print(f"      {sosp[0][3]!r}")
 
 print()
