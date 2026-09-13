@@ -117,17 +117,43 @@ uses wikitext-103) plus model output, to 65,536 rows:
 | | shipped 47k | extended 65k |
 |---|---|---|
 | coverage on Spanish output | 64.4% | **99.1%** |
-| accepted/draft, Spanish | 1.01 | **1.64** |
-| accepted/draft, English | 1.77 | **1.80** |
-| tok/s, Spanish | 33.8 | **44.6** |
-| tok/s, English | 45.9 | 44.3 |
 | byte-fallback ids | 376 | **400** |
 | byte saving retained | 100% | **91%** |
 | Spanish quality gate | clean | **clean** |
 
-**Spanish gains 32% and English is untouched**, for 9% of the byte saving. The
-size trade is gentle in this range — the draft head is 0.22 GiB at 47k and 0.31
-at 65k against 1.18 full — so buying coverage for a second language is cheap.
+### Measured with an interleaved A/B
+
+Prompt choice moves acceptance by 20-30% on this model, so single-prompt
+comparisons are worthless. Five prompts per language, two repetitions each, the
+same ten measurements in every arm, in **A B B A** order so any monotonic drift
+cancels. Sixty seconds of settle after each boot, identical in all four.
+
+| arm | vocab | ES tok/s | ES acc | EN tok/s | EN acc |
+|---|---|---|---|---|---|
+| A | 47k | 32.99 | 0.96 | 40.36 | 1.45 |
+| B | 65k | 41.96 | 1.61 | 40.97 | 1.49 |
+| B | 65k | 41.88 | 1.51 | 41.68 | 1.55 |
+| A | 47k | 32.20 | 0.92 | 40.17 | 1.42 |
+
+| | 47k | 65k | |
+|---|---|---|---|
+| **Spanish tok/s** | 32.60 | **41.92** | **+28.6%** |
+| **Spanish accepted/draft** | 0.94 | **1.56** | **+66%** |
+| English tok/s | 40.27 | 41.33 | +2.6% |
+| English accepted/draft | 1.435 | 1.52 | +6% |
+
+**Spanish gains 28.6% and English pays nothing** — it is marginally better,
+though +2.6% is at the edge of what this setup resolves.
+
+The validity check is the within-arm agreement: the two 47k arms agree to 2.4%
+and the two 65k arms to 0.2%, against a 20-30% spread *between prompts*. Same
+prompts in both arms is what separates signal from noise here. The two A arms
+are 52 minutes apart and give the same answer, which excludes warm-up and
+thermal drift.
+
+The size trade is gentle in this range — the draft head is 0.22 GiB at 47k and
+0.31 at 65k against 1.18 full — so buying coverage for a second language costs
+9% of the byte saving and returns 66% of acceptance in that language.
 
 Quality was re-gated, not assumed: a new vocabulary is a new artefact and
 `bench/audit-spanish.py` was run against it in full. Zero replacement
