@@ -72,3 +72,6 @@
 !/deploy/
 !/deploy/*.service
 !/deploy/*.sh
+!/bench/audit-spanish.py
+!/bench/bench-sojufx-protocol.py
+!/bench/verify-smoke.py
