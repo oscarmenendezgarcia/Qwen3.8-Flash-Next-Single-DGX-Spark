@@ -266,15 +266,7 @@ at 2,000 when the prompt asks for a thousand words.
 
 ---
 
-## Two measurement traps
-
-**Container age.** On a sibling deployment on this box, the same binary measured
-71.3 tok/s on a container with 29 hours of real serving and 50.2 on a fresh one
-— about 40% on a code-shaped probe, reproduced across two different images. An
-*idle* soak does not reproduce it: 6 minutes and 71 minutes of idle agreed to
-0.04%. The likely cause is radix-cache occupancy, which fills with traffic and
-not with uptime; unverified. Any A/B where one side ran on a long-lived
-production container and the other on a fresh boot is suspect.
+## A measurement trap
 
 **Reasoning budget.** Through an OpenAI-compatible proxy, `enable_thinking`
 defaults on and every reply spends 150-320 tokens reasoning before writing. A
