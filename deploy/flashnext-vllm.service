@@ -1,6 +1,6 @@
 # /etc/systemd/system/flashnext-vllm.service
 #
-# Qwen3.8-Flash-Next-NVFP4 (vLLM, GB10, :8890). Created 2026-09-07.
+# Qwen3.8-Flash-Next-NVFP4 (vLLM on one GB10). The port comes from .env.
 #
 # NOT ENABLED. This unit exists so the evaluation can be driven the same way as
 # everything else on this box, but Flash-Next cannot share the GPU with the two
@@ -13,8 +13,8 @@
 # ExecStartPost readiness probe is needed.
 
 [Unit]
-Description=Qwen3.8-Flash-Next-NVFP4 (vLLM, GB10, :8890)
-Documentation=file:///home/oscar/flashnext-recipe/README.md
+Description=Qwen3.8-Flash-Next-NVFP4 (vLLM, GB10)
+Documentation=file://@RECIPE_DIR@/README.md
 After=docker.service network-online.target
 Requires=docker.service
 Wants=network-online.target
@@ -22,28 +22,26 @@ Wants=network-online.target
 # The GB10 has UNIFIED memory: GPU and host page cache come out of the same
 # 121.63 GiB. This model's GPU budget is MemTotal - HOST_RESERVE_GIB (26) =
 # ~94.9 GiB, and its own reserve breakdown budgets "co-tenants ~7". What runs
-# here today is qwen38-dflash at mem-fraction 0.56 (~68 GiB) plus nemotron at
-# gpu-memory-utilization 0.20 (~24 GiB) = ~92 GiB. There is no configuration in
 # which Flash-Next coexists with either. Conflicts= makes systemd stop them
 # before starting this instead of trusting nobody makes a mistake.
 #
-# Unlike the note in qwen38-dflash.service, both peers now have units, so both
-# can be named here. (That comment is stale: it predates nemotron-vllm.service.)
 #
 # start.sh enforces the same rule independently -- REQUIRE_IDLE_GPU=true aborts
 # at its Step 3 if nvidia-smi --query-compute-apps returns any tenant -- so a
 # hand-launched peer that systemd never learned about still cannot wedge the box.
-Conflicts=qwen38-dflash.service nemotron-vllm.service
+# Conflicts= can only name UNITS, so list whatever other model services
+# exist on your box. Uncomment and edit:
+#Conflicts=my-other-model.service my-second-model.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-User=oscar
-WorkingDirectory=/home/oscar/flashnext-recipe
+User=@RUN_USER@
+WorkingDirectory=@RECIPE_DIR@
 
 # start.sh resolves the HF cache through ${HOME}. systemd sets it from User=,
 # but it is spelled out so this does not depend on that.
-Environment=HOME=/home/oscar
+Environment=HOME=@HOME_DIR@
 
 # start.sh leaves files/memwatch.sh running in the background (nohup, so it
 # stays in this unit's cgroup). It is the watchdog that stops the container when
@@ -64,8 +62,8 @@ TimeoutStartSec=3600
 # host's /dev/shm until reboot.
 TimeoutStopSec=120
 
-ExecStart=/home/oscar/flashnext-recipe/start.sh
-ExecStop=/home/oscar/flashnext-recipe/stop.sh
+ExecStart=@RECIPE_DIR@/start.sh
+ExecStop=@RECIPE_DIR@/stop.sh
 
 [Install]
 WantedBy=multi-user.target

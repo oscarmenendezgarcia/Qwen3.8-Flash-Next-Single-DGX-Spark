@@ -13,11 +13,14 @@ Detecta:
   - degradacion a lo largo de una conversacion multivuelta
   - salida vacia por presupuesto de razonamiento
 """
+import os
 import json, re, sys, time, urllib.request
 import functools
 print = functools.partial(print, flush=True)
 
-URL, MODEL = "http://127.0.0.1:8890/v1/chat/completions", "qwen3.8-flash-next"
+PORT = os.environ.get("PORT", "8888")
+URL = f"http://127.0.0.1:{PORT}/v1/chat/completions"
+MODEL = os.environ.get("SERVED_MODEL_NAME", "qwen3.8-flash-next")
 
 # Qwen publica ajustes DISTINTOS por modo, y mezclarlos es lo que provoca
 # "language mixing" segun su propia advertencia. El generation_config.json del

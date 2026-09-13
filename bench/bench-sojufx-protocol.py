@@ -8,10 +8,13 @@ Su protocolo (README de sojufx/sojufx-Qwen3.8-Flash-Next):
   Suite de produccion: 4 clases de carga, 256 tokens, 2 repeticiones,
                 temperature=0, thinking off, se reportan medianas.
 """
+import os
 import json, statistics, sys, time, urllib.request
 import concurrent.futures as cf
 
-URL, MODEL = "http://127.0.0.1:8890/v1/chat/completions", "qwen3.8-flash-next"
+PORT = os.environ.get("PORT", "8888")
+URL = f"http://127.0.0.1:{PORT}/v1/chat/completions"
+MODEL = os.environ.get("SERVED_MODEL_NAME", "qwen3.8-flash-next")
 
 def run(prompt, mt, thinking=False):
     body = {"model": MODEL, "messages": [{"role":"user","content":prompt}],

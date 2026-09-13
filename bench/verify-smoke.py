@@ -4,9 +4,11 @@
 El hueco que dejo pasar el asturiano: nadie probo espanol. Mia midio MGSM en
 ingles y chino; sojufx y styles01 no publican prueba de idioma. Esto lo cubre.
 """
+import os
 import json, re, sys, unicodedata, urllib.request
 
-URL = "http://127.0.0.1:8890/v1/chat/completions"
+PORT = os.environ.get("PORT", "8888")
+URL = f"http://127.0.0.1:{PORT}/v1/chat/completions"
 MODEL = "qwen3.8-flash-next"
 
 def ask(prompt, mt=1500, temp=0.0):

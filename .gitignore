@@ -71,8 +71,9 @@
 # --- local: systemd units for this host (see HANDOFF.md) ---
 !/deploy/
 !/deploy/*.service
-!/deploy/*.sh
+!/deploy/install-unit.sh
 !/bench/audit-spanish.py
 !/bench/bench-sojufx-protocol.py
 !/bench/verify-smoke.py
 !/docs/spanish-drafting-and-performance-2026-09-13.md
+!/files/build_draft_vocab_extend.py

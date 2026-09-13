@@ -20,40 +20,50 @@ projects converged on this exact file** — MiaAI-Lab, `styles01/sparkrun-recipe
 and `sojufx/sojufx-Qwen3.8-Flash-Next` — which is itself evidence.
 
 A locally built replacement, intended to add Spanish coverage, degraded output
-badly enough to force a rollback. The cause is in how it was built: a Spanish
-**dictionary** — a flat word list — was passed to `files/build_draft_vocab.py`
-as if it were a corpus.
+badly enough to force a rollback. Reconstructing how it was built took two
+passes, and the first conclusion was wrong.
 
-The builder counts token frequencies over text. In a dictionary every inflected
-form appears exactly once, so `ababillándoos` carries the weight of `que`. The
-frequency signal the method depends on is gone.
+**What it was built from.** Real corpora — 11.7 MB of actual session text,
+Spanish and English — plus `es_dict.txt`, a Spanish dictionary: 885,412 words
+on a single line, every inflected form exactly once. Re-running
+`files/build_draft_vocab.py` over those inputs reproduces the vocabulary
+**exactly**, 100% id-for-id, which settles what went in.
 
-Measured against the 65k vocabulary it replaced:
+**What actually broke.** Not the dictionary. Measured against the 65k it
+replaced, the vocabulary kept only **286** ids below 400 — the byte-fallback
+range, the pieces BPE uses to assemble `ñ`, `á`, `é` and every multi-byte UTF-8
+sequence. Upstream's shipped file keeps **376**.
 
-| | |
-|---|---|
-| ids in the dictionary-built vocabulary | 44,138 |
-| shared with its predecessor | 29,376 |
-| **ids discarded** | **36,160** |
-| of the 2,000 most frequent ids, dropped | 130 |
+But rebuilding from the corpora **without** the dictionary yields the same 286.
+The dictionary is not what dropped them.
 
-And the number that matters, ids below 400 — the byte-fallback range:
+**`build_draft_vocab.py` does not pin the byte-fallback range.** It keeps
+special and added tokens unconditionally and says so; byte-fallback ids get no
+such protection. Any corpus that does not exercise them loses them, and 11.7 MB
+of conversation logs does not. Upstream's file keeps 376 because its corpus is
+513 MiB of wikitext — broad enough for those ids to earn their place on
+frequency alone.
 
-| vocabulary | byte-fallback ids retained |
-|---|---|
-| `draft_vocab_en_code_47k.txt` (shipped) | **376** |
-| dictionary-built (local) | **286** |
+So the failure is a **missing guard in the builder**, exposed by a corpus that
+was too small and too narrow. The dictionary was, if anything, harmless: the
+corpora alone yielded 33,380 distinct ids, and the dictionary filled the
+remaining slots up to 44,138 with rare Spanish words. It displaced nothing.
 
-Those 90 missing ids are what BPE uses to assemble `ñ`, `á`, `é` and every
-multi-byte UTF-8 sequence. Decoding them returns `'�'`; the tokens accepted
-in exchange are ordinary words (`' lentamente'`, `' delito'`, `' considerada'`).
+The first version of this document said the dictionary destroyed the frequency
+signal and that this cost the byte-fallback tokens. That was an inference from
+filenames and timestamps, and the measurement above refutes it.
 
 ### If a Spanish-aware vocabulary is ever wanted
 
-- **Use text with natural frequencies** — Spanish Wikipedia, the way
-  `english.txt` uses wikitext-103 — weighted alongside the other sources.
 - **Pin the byte-fallback range unconditionally**, the way special and added
-  tokens already are. One line, and this failure becomes impossible.
+  tokens already are. This is the actual fix, and it is one line. Without it the
+  builder is only safe on corpora large and varied enough to exercise those ids
+  by frequency, which is a property nobody checks.
+- **Start from the shipped vocabulary as a floor** and only add. Rebuilding from
+  scratch is what makes it possible to lose ids that already worked.
+- **Use text with natural frequencies** — Spanish Wikipedia, the way
+  `english.txt` uses wikitext-103. A dictionary is not fatal on its own, but it
+  contributes no frequency information: every form weighs one.
 - **Gate it on Spanish output** before serving it to anyone.
 
 ### On the correctness argument
@@ -73,6 +83,55 @@ Two boundaries on that, both worth stating:
   accepted. That is a plausible route for a reduced vocabulary to affect output
   and it is **unverified** — settling it needs an A/B with and without the
   reduced vocabulary at production temperature.
+
+### Measured: the shipped vocabulary covers 64% of Spanish output
+
+The speed win from reduced-vocabulary drafting is two effects pulling opposite
+ways. The byte saving is **language-independent** — the draft head shrinks from
+1.18 to 0.22 GiB whatever is being written. Acceptance is **not**: drafts for
+tokens outside the vocabulary are rejected, and that gives the saving back.
+
+The CHANGELOG measures this for Chinese — 50.6% coverage, throughput gain
+"nothing measurable" — and concludes out-of-vocabulary traffic is break-even.
+Nobody measured Spanish. Measured here, over real Spanish model output:
+
+| | coverage | accepted/draft | tok/s |
+|---|---|---|---|
+| English | 98.9% | 1.77 | 45.9 |
+| **Spanish** | **64.4%** | **1.01** | **33.8** |
+
+Spanish sits closer to Chinese than to English. The drafter lands 1.01 tokens
+per proposal against 1.77, and 12 tok/s go with it. **The published speed win is
+largely an English win.**
+
+### Extending the vocabulary instead of rebuilding it
+
+`files/build_draft_vocab_extend.py` takes the shipped vocabulary as a **floor**
+and only adds. It cannot lose an id that already worked, which is the failure
+mode above. It also pins the byte-fallback range unconditionally, before looking
+at any frequency.
+
+Built with 668 MiB of Spanish Wikipedia (natural frequencies, as `english.txt`
+uses wikitext-103) plus model output, to 65,536 rows:
+
+| | shipped 47k | extended 65k |
+|---|---|---|
+| coverage on Spanish output | 64.4% | **99.1%** |
+| accepted/draft, Spanish | 1.01 | **1.64** |
+| accepted/draft, English | 1.77 | **1.80** |
+| tok/s, Spanish | 33.8 | **44.6** |
+| tok/s, English | 45.9 | 44.3 |
+| byte-fallback ids | 376 | **400** |
+| byte saving retained | 100% | **91%** |
+| Spanish quality gate | clean | **clean** |
+
+**Spanish gains 32% and English is untouched**, for 9% of the byte saving. The
+size trade is gentle in this range — the draft head is 0.22 GiB at 47k and 0.31
+at 65k against 1.18 full — so buying coverage for a second language is cheap.
+
+Quality was re-gated, not assumed: a new vocabulary is a new artefact and
+`bench/audit-spanish.py` was run against it in full. Zero replacement
+characters, zero drift markers.
 
 ---
 
