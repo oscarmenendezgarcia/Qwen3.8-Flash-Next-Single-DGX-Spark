@@ -73,6 +73,8 @@
 !/deploy/*.service
 !/deploy/install-unit.sh
 !/bench/audit-spanish.py
+!/bench/audit-lexical.py
+!/bench/probe-logprobs.py
 !/bench/bench-sojufx-protocol.py
 !/bench/verify-smoke.py
 !/docs/spanish-drafting-and-performance-2026-09-13.md

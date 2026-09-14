@@ -1,18 +1,26 @@
 # Serving this recipe in Spanish: drafting, sampling and benchmarks
 
 Notes from running `MiaAI-Lab/Qwen3.8-Flash-Next-Single-DGX-Spark` on a
-Spanish-language DGX Spark. Three findings, none of them visible from the
+Spanish-language DGX Spark. Four findings, none of them visible from the
 measurements already in this repository, and a harness for each.
 
 | | |
 |---|---|
-| **1** | A draft vocabulary built from a dictionary destroys Spanish. Use the one this repo ships. |
+| **1** | A draft vocabulary that drops the byte-fallback range damages Spanish. Extend the shipped one; never rebuild from scratch. |
 | **2** | Sampling parameters differ by mode, and mixing them causes language mixing. |
 | **3** | The published tok/s and the tok/s you measure are different benchmarks, not a deployment problem. |
+| **4** | Spanish output carries ~40x more lexical corruption than English, and it comes from the model, not from drafting. |
+
+> **Correction, 2026-09-14.** An earlier revision of this document presented
+> finding 1 as the cause of Spanish-language drift ("the model answered in
+> Asturian"). That attribution is wrong. Section 4 records the measurements:
+> the drift reproduces with the corrected 65k vocabulary loaded, at production
+> sampling, and with speculative decoding switched off entirely. Fixing the
+> vocabulary bought acceptance rate, which is speed. It did not buy correctness.
 
 ---
 
-## 1. Build the draft vocabulary from text, never from a dictionary
+## 1. Never rebuild the draft vocabulary from scratch; extend it
 
 `files/draft_vocab_en_code_47k.txt` ships with this repo and is English and
 code. It needs no Spanish to serve Spanish correctly. **Three independent
@@ -79,10 +87,11 @@ Two boundaries on that, both worth stating:
   says plainly that the result "does not establish universal quality
   preservation". Spanish was never tested.
 - **It is the greedy branch.** Above temperature 0 the verification is
-  probabilistic, and there the draft distribution can influence what is
-  accepted. That is a plausible route for a reduced vocabulary to affect output
-  and it is **unverified** — settling it needs an A/B with and without the
-  reduced vocabulary at production temperature.
+  probabilistic, and there the draft distribution could in principle influence
+  what is accepted. **Settled on 2026-09-14, and the answer is no** (section 4):
+  serving with `MTP_NUM_SPECULATIVE_TOKENS=0` — no drafting at all, so no draft
+  distribution to influence anything — leaves the Spanish lexical corruption
+  rate unchanged. Whatever produces it is upstream of speculative decoding.
 
 ### Measured: the shipped vocabulary covers 64% of Spanish output
 
@@ -182,10 +191,16 @@ Default vLLM sampling parameters have been overridden by the model's
 generation_config.json: {'temperature': 1.0, 'top_k': 20, 'top_p': 0.95}
 ```
 
-So a server left alone is correct for thinking traffic. **A client that turns
-thinking off without also sending the instruct values runs the combination the
-model card warns about:** *"using a higher value may occasionally result in
-language mixing and a slight decrease in model performance."*
+So a server left alone is correct for thinking traffic, and 1.0 is the card's
+own thinking-mode value, not a packaging accident. **A client that turns
+thinking off without also sending the instruct values runs neither published
+preset.**
+
+One precision, because it is easy to quote the wrong sentence here: the card's
+*"using a higher value may occasionally result in language mixing and a slight
+decrease in model performance"* is attached to raising **`presence_penalty`**,
+not to temperature. It is not evidence for the mode mismatch, and the arms below
+show `presence_penalty` does not move lexical correctness either way.
 
 Observed here, not hypothetical: an audit pass at thinking-off with
 thinking-mode sampling answered a Spanish prompt in English, on an unrelated
@@ -194,6 +209,33 @@ subject. It did not reproduce in three retries once sampling matched the mode.
 Practical consequence for anyone with a proxy in front of this model: pinning
 `temperature: 1.0` unconditionally is right for thinking traffic and wrong for
 everything else.
+
+### Measured: what the mismatch costs in Spanish
+
+Thirty generations per arm, 1,400 tokens each, the same ten Spanish prompts in
+both arms, thinking off, run interleaved on one server. Malformations are words
+absent from an 907k-form Spanish wordlist that sit one edit from a form in it,
+after removing proper nouns, English, and dialectal endings
+(`bench/audit-lexical.py`):
+
+| sampling | words | malformations | per 10k |
+|---|---|---|---|
+| thinking preset (`1.0` / `0.95`) | 13,628 | 168 | **123.3** |
+| instruct preset (`0.7` / `0.80`) | 13,872 | 49 | **35.3** |
+
+Examples from the thinking-preset arm, all in running prose: `arancaba`
+(*arrancaba*), `visivilidad` (*visibilidad*), `cangosta`, `vehicolo`
+(*vehículo*), `plastiko`, `generaziones`, `parezian`.
+
+Two things this measurement does **not** support:
+
+- **`presence_penalty` is not the lever.** The model card's instruct preset
+  includes `1.5`, but two arms at `0.7`/`0.80` differing only in that value
+  scored 62.2 and 66.2 per 10k — one number. It is listed for repetition, and it
+  is not what moves lexical correctness.
+- **It reduces, it does not fix.** The instruct preset lowers the rate ~3.5x.
+  Sustained drift into a neighbouring language is unaffected: 2/30 affected
+  generations in one arm and 2/30 in the other.
 
 ---
 
@@ -255,6 +297,91 @@ without publishing a long-context test either.
 
 ---
 
+---
+
+## 4. Cross-language leakage is the model's, not the pipeline's
+
+Spanish output from this checkpoint contains words that do not exist in Spanish
+and that no writer produces: `comenzana` for *comenzaban*, `bloqua` for
+*bloquea*, `cabizajo` for *cabizbajo*. A distinct subset is spelled with letters
+foreign to Spanish orthography — `generaziones`, `parezian`, `plastiko`,
+`neblika`, `esperansa` — i.e. subword pieces that belong to a neighbouring
+language's spelling, not random letter noise. The same signature appears when
+the model slips into Italian (`revizione` for *revisione*) or sustains a whole
+generation in Asturian.
+
+### It is specific to Spanish
+
+Same sampling, same day, ten matched prompts per language:
+
+| language | words | malformations | per 10k |
+|---|---|---|---|
+| Spanish | 16,792 | 29 | **17.3** |
+| English | 22,236 | 1 (arguable) | **0.4** |
+
+English is clean once contractions and dictionary gaps are removed. **This rules
+out generic NVFP4 damage to the output head**, which would not respect language.
+
+### It is not the drafter
+
+`MTP_NUM_SPECULATIVE_TOKENS=0`, then restored, measuring the same battery in
+each state. The third arm exists because two arms cannot tell an effect from
+run-to-run spread:
+
+| arm | words | malformations | per 10k | generations with sustained drift |
+|---|---|---|---|---|
+| MTP on (container A) | 13,628 | 168 | 123.3 | 2/30 |
+| **MTP off** (container B) | 13,734 | 200 | **145.6** | 0/30 |
+| MTP on (container C) | 13,625 | 232 | 170.3 | 1/30 |
+
+Two **identical** configurations, A and C, differ by 47 points. That spread is
+wider than anything switching MTP off produces, and the MTP-off arm lands
+between them. Speculative decoding, the reduced draft vocabulary, and therefore
+the whole drafting path are excluded.
+
+### The nucleus is applied, and it does not clip this
+
+Worth checking rather than assuming, because it is the obvious suspect:
+
+- `vllm/v1/worker/gpu/sample/sampler.py` — the only caller passing
+  `skip_top_k_top_p=True` is the non-speculative `sample()`, which then applies
+  the filter itself. The speculative `_verify()` path takes the default and
+  filters the target logits before `rejection_sample`.
+- Behaviourally: at `temperature 2.0`, `top_k=1` and `top_p=0.01` both return
+  coherent prose, while `top_k=0` with `top_p=1.0` returns multilingual token
+  salad. The filters work.
+
+### What is actually happening
+
+Forcing the exact prefix that preceded each malformation and reading the
+top-20 (`bench/probe-logprobs.py`):
+
+| produced | correct | rank/p of correct | rank/p of malformed |
+|---|---|---|---|
+| `arancaba` | *arrancaba* | 1 / 0.479 | 8 / **0.016** |
+| `nocha` | *noche* | 1 / 0.622 | 19 / **0.0017** |
+| `chocoate` | *chocolate* | 1 / 0.241 | 8 / **0.016** |
+
+Exact figures move a few points between runs — batched MoE decoding is not
+deterministic, so re-running the probe gives 0.62/0.019 where the table says
+0.48/0.016 — but the shape is stable: the malformed continuation carries
+**1-2% of the probability mass**, not a remote tail. `top_k=20` and `top_p=0.95` both keep it, and `temperature 1.0`
+samples it at that rate. Lowering temperature sharpens the distribution and is
+the only lever found that moves the rate; it does not remove the mass.
+
+> Note the trailing-space trap when reproducing this: BPE does not encode
+> `" arr"` as `" "` + `"arr"`, so a prefix ending in a space puts the model
+> out of distribution and the top-20 becomes meaningless. `rstrip()` the prefix
+> and look for `" " + word`.
+
+### Open
+
+Why the model places that mass there at all. Quantization is not excluded — only
+*generic* quantization damage is, by the English result; Spanish sits in a
+sparser region where 4-bit error has more room to reorder mid-probability
+tokens. PR #44 upstream (NVIDIA's official NVFP4 checkpoint) is the cheapest
+test: the batteries here apply unchanged.
+
 ## The harnesses
 
 `bench/audit-spanish.py` — the Spanish quality gate that did not exist. Eight
@@ -273,12 +400,31 @@ Accents and `ñ` render correctly throughout.
 It also carries a b/v orthography check, and an honest note about it: **that
 check has never caught a real error.** Across four audits it produced only false
 positives from its own regexes — `la` and `el` from a capturing group inside a
-lookahead, then the correct `anduvo`, then the correct `hacia`. The one
-confirmed defect, *reescriví* for *reescribí*, was found by a user in
-production. That output is impeccable Castilian, correctly accented, with no
-replacement characters and no dialect markers: **it passes every language check
-here.** Language identification is not spelling verification. Treat the check as
-an unvalidated safety net.
+lookahead, then the correct `anduvo`, then the correct `hacia`.
+
+**Nor has the harness as a whole.** Every real defect so far was found by a
+person reading the output: *reescriví* for *reescribí*, then `bloqua` and
+`ambias`, then a whole Italian reply containing `revizione`. All of them are
+impeccable in the dimensions this harness measures — correctly accented, no
+replacement characters, no dialect markers — and all of them are misspelled.
+**Language identification is not spelling verification.** That gap is what
+`bench/audit-lexical.py` exists to close.
+
+`bench/audit-lexical.py` — the lexical gate. Flags words absent from a large
+Spanish wordlist that sit one edit from a word in it, after removing proper
+nouns, English, enclitics and dialectal endings. Reports a rate per 10k words
+and the count of generations showing sustained drift, so two configurations can
+be compared rather than eyeballed. Half its prompts are literary on purpose:
+Spanish prose carries no anglicisms, so the filter runs clean there.
+
+    PORT=8890 python3 bench/audit-lexical.py --generate 30
+
+`bench/probe-logprobs.py` — reads the model's own top-20 at the exact position
+where a malformation was produced, to separate "the nucleus let a tail token
+through" from "the model gave the wrong form real probability mass". Two traps
+documented in its header, both of which invalidate the measurement silently: a
+trailing space breaks BPE, and omitting the chat template measures a different
+distribution.
 
 `bench/bench-sojufx-protocol.py` — replicates the published protocol so numbers
 taken here can sit beside sojufx's and Mia's.
