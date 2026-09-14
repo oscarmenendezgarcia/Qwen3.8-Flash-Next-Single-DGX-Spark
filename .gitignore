@@ -84,5 +84,8 @@
 !/bench/bench-sojufx-protocol.py
 !/bench/verify-smoke.py
 !/docs/spanish-drafting-and-performance-2026-09-13.md
+!/docs/checkpoint-quantization-and-spanish-2026-09-14.md
 !/files/build_draft_vocab_extend.py
+!/files/fp8_hybrid_modelopt.py.in
+!/files/fp8_convert.py
 !/files/draft_vocab_es_en_code_65k.txt

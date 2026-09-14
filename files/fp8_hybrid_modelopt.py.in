@@ -1,0 +1,121 @@
+
+
+# ---------------------------------------------------------------------------
+# fp8 hybrid side layers  (appended by files/patch_modelopt_mxfp8.py)
+#
+# NVIDIA's checkpoint leaves the dense side layers (GDN in/out proj, QSA
+# q/k/v/o, shared experts) in bf16. They are read in full on every decoded
+# token, so they dominate decode bandwidth; the routed experts are sparse and
+# already 4-bit. Converting them to blockwise fp8-e4m3 halves that dense read.
+# tools/fp8_convert.py does the weights; this makes vLLM dispatch them to its
+# generic blockwise-fp8 GEMM instead of the excluded bf16 path.
+#
+# Port of src/vllm_fp8_hybrid_modelopt.py from blazux/qwen3.8-Flash-DGX
+# (Apache-2.0), itself a port of @Saren-Arterius's vllm_fp8_hybrid.py.
+# No-op unless VLLM_FP8_HYBRID=1.
+#
+# Only the config patch is needed here: qsa.py routes qkv_proj through
+# model.without_modelopt_fp4(), which returns the config unchanged for
+# quant_algo MIXED_PRECISION (get_name() == "modelopt_mixed"). A pure
+# modelopt_fp4 checkpoint would also need that call redirected.
+# ---------------------------------------------------------------------------
+import os as _os_hybrid
+import logging as _logging_hybrid
+
+_hybrid_logger = _logging_hybrid.getLogger("vllm.fp8_hybrid_modelopt")
+_HYBRID_SENTINEL = "_fp8_hybrid_patched"
+
+
+def _fp8_hybrid_patch(cfg_cls) -> None:
+    from vllm.model_executor.layers.linear import LinearBase
+    from vllm.model_executor.layers.quantization.fp8 import Fp8Config
+    from vllm.transformers_utils.config import get_safetensors_params_metadata
+
+    orig_mapper = cfg_cls.apply_vllm_mapper
+    orig_gqm = cfg_cls.get_quant_method
+
+    def _scan_fp8_layers(self) -> set:
+        try:
+            from vllm.config import get_current_vllm_config
+            model = get_current_vllm_config().model_config.model
+            md = get_safetensors_params_metadata(model)
+        except Exception as exc:  # pragma: no cover
+            _hybrid_logger.warning("fp8 hybrid: cannot read safetensors metadata: %s", exc)
+            return set()
+        layers = {
+            name[: -len(".weight")]
+            for name, info in md.items()
+            if name.endswith(".weight")
+            and info.get("dtype") == "F8_E4M3"
+            and name[: -len(".weight")] + ".weight_scale_inv" in md
+        }
+        return layers
+
+    def apply_vllm_mapper(self, hf_to_vllm_mapper):
+        orig_mapper(self, hf_to_vllm_mapper)
+        hf_layers = _scan_fp8_layers(self)
+        self.fp8_layers = set(hf_to_vllm_mapper.apply_list(list(hf_layers))) if hf_layers else set()
+        if self.fp8_layers:
+            _hybrid_logger.info("fp8 hybrid (modelopt): %d blockwise-fp8 layers detected", len(self.fp8_layers))
+
+    def _norm(name: str) -> str:
+        """Compare on the part after 'layers.' so 'model.layers.3.x' == 'language_model.model.layers.3.x'."""
+        i = name.find("layers.")
+        return name[i:] if i >= 0 else name
+
+    def _is_fp8_layer(self, prefix: str) -> bool:
+        fp8_layers = getattr(self, "fp8_layers", None)
+        if fp8_layers is None:
+            fp8_layers = _scan_fp8_layers(self)
+            self.fp8_layers = fp8_layers
+        if not fp8_layers:
+            return False
+        norm_set = getattr(self, "_fp8_norm", None)
+        if norm_set is None:
+            norm_set = {_norm(l) for l in fp8_layers}
+            self._fp8_norm = norm_set
+        head, _, proj = prefix.rpartition(".")
+        fused = (self.packed_modules_mapping or {}).get(proj)
+        names = [f"{head}.{p}" for p in fused] if fused and head else [prefix]
+        hit = all(_norm(n) in norm_set for n in names)
+        if any(k in prefix for k in ("qkv_proj", "in_proj", "o_proj", "out_proj", "shared_expert")):
+            stats = self.__dict__.setdefault("_fp8_stats", {"fp8": 0, "other": 0})
+            stats["fp8" if hit else "other"] += 1
+            if not hit and "layers.0." in prefix:
+                _hybrid_logger.info("fp8 hybrid: NOT fp8: %s (checked %s)", prefix, [_norm(n) for n in names])
+        return hit
+
+    def get_quant_method(self, layer, prefix):
+        if isinstance(layer, LinearBase) and self._is_fp8_layer(prefix):
+            fp8_cfg = getattr(self, "_fp8_cfg", None)
+            if fp8_cfg is None:
+                fp8_cfg = Fp8Config(
+                    is_checkpoint_fp8_serialized=True,
+                    activation_scheme="dynamic",
+                    weight_block_size=[128, 128],
+                )
+                fp8_cfg.packed_modules_mapping = self.packed_modules_mapping
+                self._fp8_cfg = fp8_cfg
+            st = self.__dict__.get("_fp8_stats")
+            if st and st["fp8"] in (1, 50, 100, 150, 192, 200):
+                _hybrid_logger.info("fp8 hybrid: %d fused modules dispatched to Fp8LinearMethod so far (e.g. %s)", st["fp8"], prefix)
+            return fp8_cfg.get_quant_method(layer, prefix)
+        return orig_gqm(self, layer, prefix)
+
+    cfg_cls.apply_vllm_mapper = apply_vllm_mapper
+    cfg_cls._is_fp8_layer = _is_fp8_layer
+    cfg_cls.get_quant_method = get_quant_method
+    setattr(cfg_cls, _HYBRID_SENTINEL, True)
+    _hybrid_logger.info("fp8 hybrid patch applied to %s", cfg_cls.__name__)
+
+
+def _fp8_hybrid_apply() -> None:
+    if _os_hybrid.environ.get("VLLM_FP8_HYBRID", "0").lower() not in ("1", "true", "yes"):
+        return
+    for _cfg in (globals().get("ModelOptNvFp4Config"),
+                 globals().get("ModelOptMixedPrecisionConfig")):
+        if _cfg is not None and not getattr(_cfg, _HYBRID_SENTINEL, False):
+            _fp8_hybrid_patch(_cfg)
+
+
+_fp8_hybrid_apply()

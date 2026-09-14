@@ -259,6 +259,13 @@ def patch() -> None:
         "FP8_PB_WO MoE dispatch",
     )
 
+    # fp8 hybrid side layers: appended verbatim from files/fp8_hybrid_modelopt.py.in
+    # (Apache-2.0, see its header). No-op unless VLLM_FP8_HYBRID=1.
+    hybrid = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "fp8_hybrid_modelopt.py.in")
+    if os.path.isfile(hybrid):
+        src += open(hybrid, encoding="utf-8").read()
+
     open(OUT, "w").write(src)
     print("ok", OUT)
 

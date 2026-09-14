@@ -383,6 +383,15 @@ PY
 SNAP=""
 SNAP_RC=0
 SNAP="$(resolve_snapshot "$MODEL_PATH")" && SNAP_RC=0 || SNAP_RC=$?
+# TP1_SNAPSHOT names a snapshot directory explicitly, for variants that live
+# beside the downloaded one (e.g. "<rev>-fp8hybrid" from the fp8 side-layer
+# conversion). refs/main always points at the downloaded revision, so a variant
+# can never win the resolution above on its own.
+if [[ -n "${TP1_SNAPSHOT:-}" ]]; then
+    [[ -d "$MODEL_PATH/snapshots/$TP1_SNAPSHOT" ]] \
+        || err "TP1_SNAPSHOT=$TP1_SNAPSHOT not under $MODEL_PATH/snapshots"
+    SNAP="$TP1_SNAPSHOT"; SNAP_RC=0
+fi
 [[ -n "$SNAP" ]] || err "No snapshot under $MODEL_PATH/snapshots"
 SNAPSHOT_REL="snapshots/$SNAP"
 [[ -f "$MODEL_PATH/$SNAPSHOT_REL/config.json" ]] || err "No snapshot under $MODEL_PATH/snapshots"
@@ -730,6 +739,16 @@ info "  Graphs:     $CUDAGRAPH_MODE  capture=${_CG_SIZES:-vllm-default}  compile
 info "  Port:       $PORT"
 info ""
 
+# vLLM resolves a repo id through the HF cache itself, which always lands on
+# refs/main. With TP1_SNAPSHOT pointing at a variant beside it, pass the
+# snapshot path instead so the engine loads what the budget above was computed
+# from; --served-model-name keeps the public name unchanged either way.
+MODEL_ARG="$MODEL_ID"
+if [[ -n "${TP1_SNAPSHOT:-}" ]]; then
+    MODEL_ARG="/root/.cache/huggingface/hub/models--${MODEL_ID//\//--}/$SNAPSHOT_REL"
+    info "  Snapshot:   $TP1_SNAPSHOT (TP1_SNAPSHOT)"
+fi
+
 LAUNCH_SCRIPT=$(mktemp /tmp/vllm_tp1_XXXXXX.sh)
 cat > "$LAUNCH_SCRIPT" <<LAUNCH_EOF
 #!/bin/bash
@@ -760,7 +779,7 @@ docker run \\
     -v $HOME/.cache/vllm:/root/.cache/vllm \\
     $EXTRA_DOCKER_ARGS \\
     $IMAGE \\
-    $MODEL_ID \\
+    $MODEL_ARG \\
     $VLLM_ARGS_STR \\
     --host 0.0.0.0 \\
     --port $PORT
