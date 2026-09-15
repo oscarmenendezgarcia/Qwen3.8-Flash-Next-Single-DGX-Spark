@@ -78,8 +78,6 @@
 !/deploy/
 !/deploy/*.service
 !/deploy/install-unit.sh
-!/deploy/sparkdash/
-!/deploy/sparkdash/*
 !/bench/audit-spanish.py
 !/bench/audit-lexical.py
 !/bench/probe-logprobs.py
