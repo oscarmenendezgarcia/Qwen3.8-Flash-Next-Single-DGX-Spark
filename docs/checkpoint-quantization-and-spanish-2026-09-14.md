@@ -217,11 +217,35 @@ and 260k completes without error, which is the closest thing to a long-context
 check this build has had. TTFT is 59 s at 128k and 130 s at 260k on a cold
 prefix; prefix caching takes a repeated prefix back down to ~0.5 s.
 
-The conversion is `tools/fp8_convert.py` from blazux (Apache-2.0), 300 tensors,
-5.42 GiB of BF16 -> 2.71 GiB of fp8, worst per-tensor max relative error 3.5%.
-It needs a dispatch shim so vLLM routes those layers to its blockwise-fp8 GEMM
-instead of the excluded bf16 path; ours is appended to `modelopt_patched.py` by
-`files/patch_modelopt_mxfp8.py` and is a no-op unless `VLLM_FP8_HYBRID=1`.
+`files/make_fp8_hybrid.sh` does it end to end:
+
+    ./files/make_fp8_hybrid.sh nvidia/Qwen3.8-Flash-Next-NVFP4
+
+It writes a sibling snapshot `<rev>-fp8hybrid` and prints the `.env` lines to
+set. The conversion itself is `files/fp8_convert.py`, vendored from blazux
+(Apache-2.0): 300 tensors, 5.42 GiB of BF16 -> 2.71 GiB of fp8, worst per-tensor
+max relative error 3.5%. Serving it needs a dispatch shim so vLLM routes those
+layers to its blockwise-fp8 GEMM instead of the excluded bf16 path; ours is
+appended to `modelopt_patched.py` by `files/patch_modelopt_mxfp8.py` and is a
+no-op unless `VLLM_FP8_HYBRID=1`.
+
+Four things trip this up, all of them silent or misleading, all handled by the
+script:
+
+- The converter leaves the originals as `<shard>.bf16.bak`. Here those are
+  symlinks into `../../blobs`, and `start.sh` sizes the snapshot with `du -L`,
+  so it follows them and measures 146 GiB against the real 121 — the memory
+  guard then aborts with what looks like a memory problem.
+- The shards it writes are root-owned and not world-readable; the serving
+  container's loader cannot open them.
+- `PLE_GIB` must be the n-gram table, 47.68 GiB. Sizing the file that holds it
+  gives 50.03 — NVIDIA ships the MTP head in the same shard — and summing every
+  tensor with `ple` in the name gives 47.75, because `ple.key_proj` and
+  `ple.value_proj` stay on the GPU. Left at the stock 26.82 the weights look
+  21 GiB larger than they are and the launch aborts.
+- `TP1_SNAPSHOT` is required: vLLM resolves a repo id through the HF cache and
+  always lands on `refs/main`, so without it the budget is computed from the
+  converted snapshot while the engine loads the published one.
 
 The bf16 KV comes from blazux's options table, which lists fp8 KV as -10% decode
 and one tournament scenario lost. Here it was +13%. Its cost is the pool: 481k

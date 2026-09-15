@@ -80,3 +80,42 @@ docker run --rm -v "$HF_CACHE:/hf" --entrypoint bash "$IMAGE" -c "
 n=$(python3 -c "import json;print(sum(1 for k in json.load(open('$DST/model.safetensors.index.json'))['weight_map'] if k.endswith('weight_scale_inv')))")
 [[ "$n" -gt 0 ]] || err "conversion produced no blockwise-fp8 tensors"
 info "done: $n weight_scale_inv tensors, $(du -sh -L "$DST" | cut -f1) snapshot"
+
+# PLE_GIB is the one value start.sh cannot infer, and getting it wrong is not a
+# warning: start.sh subtracts it from the checkpoint to size the weights, so the
+# stock 26.82 against a 47.68 GiB table makes the weights look 21 GiB larger than
+# they are and the memory guard aborts before loading anything. Print it measured
+# rather than leave it to be looked up.
+# Size the n-gram embedding, not "everything with ple in the name". Two ways to
+# get this wrong, both verified here against the packed table start.sh builds
+# (47.68 GiB): sizing the file that holds it adds the MTP head NVIDIA ships in
+# the same shard (50.03), and summing every PLE tensor adds ple.key_proj and
+# ple.value_proj, which stay on the GPU and are not offloaded (47.75).
+PLE_MEASURED=$(python3 - "$DST" <<'PLEPY'
+import json, os, struct, sys
+snap = sys.argv[1]
+idx = json.load(open(f"{snap}/model.safetensors.index.json"))["weight_map"]
+total = 0
+for shard in sorted({f for k, f in idx.items() if "ngram_embedding" in k.lower()}):
+    with open(f"{snap}/{shard}", "rb") as fh:
+        n = struct.unpack("<Q", fh.read(8))[0]
+        header = json.loads(fh.read(n))
+    for name, meta in header.items():
+        if name != "__metadata__" and "ngram_embedding" in name.lower():
+            a, b = meta["data_offsets"]
+            total += b - a
+print(f"{total / 1073741824:.2f}")
+PLEPY
+)
+
+echo
+info "Put these in .env (see .env.gb10.sample for the rest):"
+echo
+echo "    TP1_MODEL_ID=$MODEL_ID"
+echo "    TP1_SNAPSHOT=${REV}-fp8hybrid"
+echo "    PLE_GIB=$PLE_MEASURED"
+echo "    EXTRA_DOCKER_ARGS=\"-e VLLM_USE_V2_MODEL_RUNNER=1 -e VLLM_FP8_HYBRID=1\""
+echo
+info "A bigger PLE table also wants more host reserve for its page cache:"
+info "HOST_RESERVE_GIB=28 was measured comfortable here for a 47.68 GiB table"
+info "(residency 3.7-5.1 GiB while serving). Raise it if the table is larger."
