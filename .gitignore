@@ -78,6 +78,9 @@
 !/deploy/
 !/deploy/*.service
 !/deploy/install-unit.sh
+!/deploy/rollback-to-qwen-nemotron.sh
+!/deploy/sparkdash/
+!/deploy/sparkdash/*
 !/bench/audit-spanish.py
 !/bench/audit-lexical.py
 !/bench/probe-logprobs.py
@@ -88,4 +91,5 @@
 !/files/build_draft_vocab_extend.py
 !/files/fp8_hybrid_modelopt.py.in
 !/files/fp8_convert.py
+!/files/make_fp8_hybrid.sh
 !/files/draft_vocab_es_en_code_65k.txt
