@@ -78,7 +78,6 @@
 !/deploy/
 !/deploy/*.service
 !/deploy/install-unit.sh
-!/deploy/rollback-to-qwen-nemotron.sh
 !/deploy/sparkdash/
 !/deploy/sparkdash/*
 !/bench/audit-spanish.py
