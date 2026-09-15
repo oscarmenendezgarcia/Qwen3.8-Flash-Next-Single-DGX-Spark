@@ -11,12 +11,20 @@ box; the harnesses are `bench/audit-lexical.py` and `bench/probe-logprobs.py`.
 |---|---|---|
 | malformations per 10k words | **123.3** | **30.0** |
 | generations drifting to another language | 2/30 | **0/30** |
-| decode, single stream | **41.9 tok/s** | 34.4 tok/s |
-| KV pool | 16.43 GiB (~1.13M tok) | 13.17 GiB (481k tok) |
-| concurrency at 262k | 4.3x | 1.84x |
+| decode, single stream (code) | 64.5 tok/s | **61.0 tok/s** |
+| decode, single stream (English prose) | 52.8 | 48.1 |
+| KV pool | 500,951 tok (1.91x @262k) | 474,503 tok (1.81x) |
 
-Four times fewer malformations and no drift, for 18% of decode and half the
-long-context concurrency.
+Four times fewer malformations and no drift, for **2-9% of decode** — about 5%
+on the workloads this box actually serves.
+
+> **Correction, 2026-09-15.** The first revision of this document reported the
+> cost as 18% of decode, from a 34.4 vs 41.9 tok/s comparison. Both numbers came
+> from a local harness running Spanish literary prose, which turns out to be the
+> worst point of the whole range: it is the one workload where the draft
+> vocabulary covers badly and acceptance collapses. Measured with sparkDash
+> across four prompt types, on both checkpoints, same host reserve and same KV
+> dtype, the real spread is 2-9%. Section 6 carries the table.
 
 ---
 
@@ -172,11 +180,42 @@ hand.
 
 Two steps recovered most of it, neither costing quality:
 
-| | tok/s C=1 | KV pool | concurrency @262k |
+Measured with the local harness (Spanish prose, 600 tokens, C=1):
+
+| | tok/s | KV pool | concurrency @262k |
 |---|---|---|---|
 | NVIDIA as published | 27.2 | 660k tok | 2.5x |
 | + dense side layers to blockwise fp8 | 30.5 (+12%) | 829k | 3.2x |
 | + bf16 KV instead of fp8 | **34.4** (+13%) | 481k | **1.84x** |
+
+### What it actually costs (sparkDash, both checkpoints, same day)
+
+The numbers above measure the steps, not the deployment. Run against both
+checkpoints with the same tool, the same `HOST_RESERVE_GIB=28` and the same
+bf16 KV, at concurrency 1, 600 tokens:
+
+| prompt type | Mia mirror | NVIDIA hybrid | delta |
+|---|---|---|---|
+| structured | 64.77 | 62.64 | **-3.3%** |
+| code | 64.51 | 61.01 | **-5.4%** |
+| json | 58.01 | 56.75 | **-2.2%** |
+| English prose | 52.82 | 48.07 | **-9.0%** |
+
+Code ladder, aggregate: 64.2 / 110.7 / 195.0 for the mirror against
+61.0 / **112.9** / 184.7 — the hybrid is ahead at two streams and 5% behind at
+one and four. KV pools land within 6% of each other (500,951 against 474,503
+tokens).
+
+**The workload dominates far more than the checkpoint does.** Spanish literary
+prose runs at 34.4 tok/s and structured output at 62.6 on the same server, a
+1.8x spread; the checkpoints differ by 5%. Any single-workload benchmark of this
+model says more about the prompt than about the build.
+
+Prefill on the hybrid, unique prefix per size so the cache cannot inflate it:
+1,532 tok/s at 1k, 2,380 at 16k, 2,338 at 64k, 2,222 at 128k, 2,004 at 260k —
+and 260k completes without error, which is the closest thing to a long-context
+check this build has had. TTFT is 59 s at 128k and 130 s at 260k on a cold
+prefix; prefix caching takes a repeated prefix back down to ~0.5 s.
 
 The conversion is `tools/fp8_convert.py` from blazux (Apache-2.0), 300 tensors,
 5.42 GiB of BF16 -> 2.71 GiB of fp8, worst per-tensor max relative error 3.5%.
@@ -189,22 +228,26 @@ and one tournament scenario lost. Here it was +13%. Its cost is the pool: 481k
 tokens instead of 829k, and concurrency at a full 262k request from 3.2x to
 1.84x. A full-context request still fits (it needs 7.20 GiB).
 
-**Honest accounting:** the 41.9 tok/s baseline for the mirror was measured with
-fp8 KV. Give it bf16 too and it would likely reach ~46, so the real gap is
-nearer 25% than 18%. We stopped paying a cost that was avoidable on both.
+**What this section got wrong the first time.** It closed by warning the gap was
+"nearer 25% than 18%", reasoning that the mirror's 41.9 tok/s baseline had been
+measured with fp8 KV and would rise with bf16. The direction was right and the
+size was wrong: measured properly the next day, the gap is 5%. The error was not
+the KV dtype, it was benchmarking one workload — the slowest one — and
+generalising from it.
 
 ## 7. What is not measured
 
-- **Tool loops and code.** Everything here is Spanish prose. The fp8 conversion
+- **Tool-loop and code *correctness*.** Code and structured output are now
+  benchmarked for speed (section 6) and a day of real coding traffic passed
+  without a complaint, but neither is a correctness check. The fp8 conversion
   puts 3.5% per-tensor error into dense layers; blazux validated theirs with a
-  17-scenario agentic tournament (45/51 before and after), we did not. This is
-  the largest gap, and it is the workload this box actually serves.
-- **Long context.** 262k is served and no needle-in-a-haystack was run on this
-  build. One open report claims a community NVFP4 of this model finds 300 of
-  2,048 needles at 400k where NVIDIA's is perfect; blazux measures both at
-  parity, 6/6 to 413k. Neither tested a hand-converted snapshot.
-- **Prefill**, only decode was measured. A first pass over a cold region of the
-  PLE table reads from NVMe and can be several times slower.
+  17-scenario agentic tournament (45/51 before and after), we have no equivalent.
+  This is still the largest gap, and it is the workload this box actually serves.
+- **Long context retrieval.** A 260k prefill completes without error (section 6),
+  which shows the build does not break at full context — but it is not a
+  needle-in-a-haystack. One open report claims a community NVFP4 of this model
+  finds 300 of 2,048 needles at 400k where NVIDIA's is perfect; blazux measures
+  both at parity, 6/6 to 413k. Neither tested a hand-converted snapshot.
 - **Stability over hours.** This configuration has run for well under a day, and
   a container-age effect worth ~40% on a code probe has bitten this box before.
 - **The draft vocabulary** was built against the mirror; acceptance on this
