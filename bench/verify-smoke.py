@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Gate de calidad para Flash-Next ANTES de enrutarle trafico.
 
-El hueco que dejo pasar el asturiano: nadie probo espanol. Mia midio MGSM en
-ingles y chino; sojufx y styles01 no publican prueba de idioma. Esto lo cubre.
+El hueco que dejo pasar el asturiano: nadie probo espanol. La evidencia de
+calidad publicada es MGSM en ingles y chino; ninguna receta publica prueba
+de idioma. Esto lo cubre.
 """
 import os
 import json, re, sys, unicodedata, urllib.request
