@@ -5,6 +5,63 @@ are grouped by date, newest first. Every measurement named here was taken on the
 one DGX Spark this repo is written for — treat them as that host's numbers, not
 as promises.
 
+## 2026-09-20
+
+- **The Qwen tool parser no longer eats an answer that quotes a tool marker.**
+  A reply containing `<tool_call>` inside ordinary prose was truncated to the
+  text before it: 12 characters survived of 416. Two patches, blazux's
+  adaptation of `vllm#56661`, applied to four vLLM files in the container at
+  startup by `files/patch_qwen_tool_parser.sh`; each patched file is parsed
+  before it is mounted. Verified live: a real call still returns
+  `tool_calls=1` with well-formed arguments, and a quoted marker returns
+  `tool_calls=0` with the answer intact. Drop this when `vllm#56661` lands in
+  a release.
+
+- **No `reasoning_effort` value returns 400 any more.** The checkpoint's
+  template accepts `xhigh`, `medium` and `low` and raises on everything else,
+  so `high` — what an OpenAI-compatible client sends — came back as an HTTP
+  400. `files/patch_chat_template_effort.sh` now trims, lowercases, maps the
+  synonyms other harnesses use, and falls back to the template's own default
+  for anything left, including the empty string a harness sends when it fills
+  the field but leaves it blank. Measured against the live server: 6 of 15
+  values accepted before, 15 of 15 after. Verified additive — every value that
+  already worked renders byte-identical across 7 values x 4 message shapes.
+  The fallback is a deliberate trade: a typo now lowers the effort silently
+  instead of failing loudly, which is the cheaper failure because
+  `reasoning_effort` only changes a sentence of the system prompt.
+
+- **`HOST_RESERVE_GIB` 28 -> 30 -> 28.** Raised on the recommendation this
+  repo documents for the NVIDIA checkpoint, then measured and put back. The
+  2 GiB come straight out of the KV pool: 474,503 tokens at 28 against
+  413,051 at 30, or 1.81x against 1.58x concurrency at a 262k context. PLE
+  table residency here is 3.7-5.1 GiB of a 47.68 GiB mapping and
+  `MemAvailable` sits at 16-21 GiB, so 28 keeps ample margin. Contrary to the
+  README's note, `NV_ERR_NO_MEMORY` did not disappear at 30 on this host: one
+  startup at 30 logged one and one at 28 logged two, both coming up healthy.
+  Raise it again if `MemAvailable` sits below ~13 GiB sustained.
+
+- **`start.sh` no longer passes two `--chat-template` arguments.** The effort
+  template was added before the `CHAT_TEMPLATE` branch, so setting that
+  documented knob produced two of them; argparse took the last, which meant
+  `CHAT_TEMPLATE` won by ordering rather than by intent. The effort template
+  now lives in the `else` branch, where it belongs: it is the checkpoint's own
+  template with one line rewritten, so it pairs with `qwen3_coder`, while
+  `CHAT_TEMPLATE` pairs with `qwen3_xml`.
+
+- **Merged upstream #41, #51 and #52.** #41 carried three files of this fork
+  back, so both trees had them and both had moved on. `bench/audit-spanish.py`
+  and `bench/verify-smoke.py` took theirs; the Spanish drafting document kept
+  this fork's text, because what upstream added is the *pre-correction*
+  revision and taking theirs would have reinstated a claim this fork
+  disproved.
+
+- **Measured after all of the above, on one restart.** Lexical malformations
+  28.7 per 10k against a 30.0 reference, 0/30 sustained drift; 13.0 per 10k
+  and 0/20 on the drift-trigger battery; decode within noise on all four
+  prompt types; prefill within noise at 1k, 16k and 131k; 12 of 13 repo tests
+  pass, 1 skipped. Two first-pass outliers — prose at -8.0% and 1k prefill at
+  -18% — did not survive four repeats each and were cold-start noise.
+
 ## 2026-09-18
 
 ### Measured

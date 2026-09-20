@@ -551,13 +551,14 @@ then set these three lines in `.env` and run `./start.sh`:
 ```bash
 TP1_MODEL_ID=nvidia/Qwen3.8-Flash-Next-NVFP4
 PLE_GIB=47.68
-HOST_RESERVE_GIB=30
+HOST_RESERVE_GIB=28
 ```
 
 Without `PLE_GIB=47.68` the budget check counts the PLE table as GPU weights
-and refuses to boot. Without `HOST_RESERVE_GIB=30` the CUDA-graph capture at
-startup runs past the memory budget. If you turn MTP off
-(`MTP_NUM_SPECULATIVE_TOKENS=0`), also set `MTP_WEIGHTS_GIB=2.34`.
+and refuses to boot. The reserve has to go up from the default 26, or the
+CUDA-graph capture at startup runs past the memory budget; 28 and 30 both
+clear it here, and the paragraph below says what each costs. If you turn MTP
+off (`MTP_NUM_SPECULATIVE_TOKENS=0`), also set `MTP_WEIGHTS_GIB=2.34`.
 `.env.sample` explains all of them.
 
 **Trade-offs against the default checkpoint**, measured on one DGX Spark:
@@ -567,13 +568,26 @@ startup runs past the memory budget. If you turn MTP off
 | weights on the GPU | 71.8 GiB | 75.9 GiB |
 | PLE table in host memory | 26.8 GiB | 47.7 GiB |
 | disk (checkpoint + packed PLE table) | ~99 + 27 GiB | ~124 + 48 GiB |
-| `HOST_RESERVE_GIB` it needs | 26 (the default) | 30 |
+| `HOST_RESERVE_GIB` it needs | 26 (the default) | 28-30 |
 | KV pool at that reserve | ~975K tokens | ~545K-570K tokens |
 
 At `HOST_RESERVE_GIB=26` the NVIDIA checkpoint peaked at 101.1 GiB of driver
 memory against a 95.65 GiB budget during graph capture, with 12
 `NV_ERR_NO_MEMORY` in the kernel log. At 30 it peaked at 90.0 GiB with none.
 30 also covers `MAX_NUM_SEQS=8` (measured).
+
+**A second host disagrees on the top of that range, and on what "none"
+means.** On the DGX Spark these notes are written from, 28 has served for days
+without incident, and the two reserves differ by more KV than the margin is
+worth: 474,503 tokens at 28 against 413,051 at 30, or 1.81x against 1.58x
+concurrency at a 262k context. The reserve is subtracted from the GPU budget,
+so those 2 GiB are paid in full out of the pool. `NV_ERR_NO_MEMORY` also did
+not disappear at 30 on that host: one startup at 30 logged one, and one at 28
+logged two, with the server coming up healthy both times — a count too small
+to rank the two, but enough to say the line is not clean at either. Treat 26
+as too low, and 28 against 30 as a choice between KV pool and host margin that
+your own `MemAvailable` should settle. Below roughly 13 GiB sustained, raise
+it.
 
 Decode speed has not been measured against the default on equal settings.
 NVIDIA keeps attention and the shared experts in BF16, so each token moves

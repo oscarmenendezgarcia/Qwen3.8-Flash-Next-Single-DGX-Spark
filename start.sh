@@ -867,7 +867,6 @@ VLLM_ARGS+=("--load-format" "safetensors")
 VLLM_ARGS+=("--safetensors-load-strategy" "lazy")
 VLLM_ARGS+=("--enable-chunked-prefill")
 VLLM_ARGS+=("--reasoning-parser" "qwen3")
-[[ -f "$EFFORT_TEMPLATE" ]] && VLLM_ARGS+=("--chat-template" "/root/chat_template_effort.jinja")
 VLLM_ARGS+=("--enable-auto-tool-choice")
 # CHAT_TEMPLATE: host path to a replacement Jinja chat template, mounted into
 # the container read-only. The shipped froggeric v22.5 template
@@ -885,6 +884,13 @@ if [[ -n "$CHAT_TEMPLATE" ]]; then
     VLLM_ARGS+=("--chat-template" "/root/chat_template.jinja")
     VLLM_ARGS+=("--tool-call-parser" "qwen3_xml")
 else
+    # The effort template belongs to this branch and only this one: it is the
+    # checkpoint's own template with the reasoning_effort line rewritten, so it
+    # pairs with qwen3_coder like the stock one. Setting it outside the else
+    # appended a second --chat-template whenever CHAT_TEMPLATE was also set;
+    # argparse took the last, so CHAT_TEMPLATE happened to win, by ordering
+    # rather than by intent and with nothing saying so.
+    [[ -n "$EFFORT_TEMPLATE" ]] && VLLM_ARGS+=("--chat-template" "/root/chat_template_effort.jinja")
     VLLM_ARGS+=("--tool-call-parser" "qwen3_coder")
 fi
 # REQUIRED for PLE offload: only multiproc_executor spawns the offload worker.
