@@ -575,6 +575,10 @@ MODELOPT_PKG="$VLLM_PKG/model_executor/layers/quantization/modelopt.py"
 QSA_OPS_PKG="$VLLM_PKG/models/qwen3_8_flash_next/nvidia/ops/qsa.py"
 QSA_NVIDIA_PKG="$VLLM_PKG/models/qwen3_8_flash_next/nvidia/qsa.py"
 MTP_PKG="$VLLM_PKG/models/qwen3_8_flash_next/nvidia/mtp.py"
+PARSER_PKGS=("$VLLM_PKG/parser/qwen3.py"
+             "$VLLM_PKG/parser/nemotron_v3.py"
+             "$VLLM_PKG/parser/engine/parser_engine_config.py"
+             "$VLLM_PKG/parser/engine/streaming_parser_engine.py")
 
 info "=== Step 4: Prepare patches ==="
 if ! docker image inspect "$IMAGE" &>/dev/null; then
@@ -599,6 +603,16 @@ PATCHED_MODELOPT="$SCRIPT_DIR/files/modelopt_patched.py"
 extract "$MODELOPT_PKG" "$SCRIPT_DIR/files/modelopt_patched.py.orig"
 python3 "$SCRIPT_DIR/files/patch_modelopt_mxfp8.py"
 [[ -f "$PATCHED_MODELOPT" ]] || err "modelopt patch missing after patch_modelopt_mxfp8.py"
+
+# Qwen tool-marker truncation. The parser enters a tool preamble as soon as it
+# sees the opener, so an answer that merely quotes `<tool_call>` -- reviewing
+# agent code, explaining the format, a fenced example -- loses that text and
+# everything after it, silently, with finish_reason "stop". Measured here: a
+# 150-character answer came back as "La etiqueta ". Real tool calls, multiple
+# calls and ordinary text parse byte-identically before and after.
+PARSER_DIR="$SCRIPT_DIR/files/parser/vllm"
+"$SCRIPT_DIR/files/patch_qwen_tool_parser.sh" >/dev/null
+[[ -f "$PARSER_DIR/parser/qwen3.py" ]] || err "parser patch missing after patch_qwen_tool_parser.sh"
 
 # FP8 KV support for the QSA kernels. The patch is compiled out when the KV
 # cache is BF16, so it is applied unconditionally and costs nothing at KV_CACHE_DTYPE=auto.
@@ -786,6 +800,10 @@ docker run \\
     -v $PATCHED_QSA_OPS:$QSA_OPS_PKG:ro \\
     -v $PATCHED_QSA_NVIDIA:$QSA_NVIDIA_PKG:ro \\
     -v $PATCHED_MTP:$MTP_PKG:ro \\
+    -v $PARSER_DIR/parser/qwen3.py:${PARSER_PKGS[0]}:ro \\
+    -v $PARSER_DIR/parser/nemotron_v3.py:${PARSER_PKGS[1]}:ro \\
+    -v $PARSER_DIR/parser/engine/parser_engine_config.py:${PARSER_PKGS[2]}:ro \\
+    -v $PARSER_DIR/parser/engine/streaming_parser_engine.py:${PARSER_PKGS[3]}:ro \\
     -v $OFFLOAD_DIR/ple_offload_layer.py:$VLLM_PKG/model_executor/layers/ple_offload_layer.py:ro \\
     -v $OFFLOAD_DIR/connector.py:$VLLM_PKG/v1/ple_offload/connector.py:ro \\
     -v $OFFLOAD_DIR/worker.py:$VLLM_PKG/v1/ple_offload/worker.py:ro \\

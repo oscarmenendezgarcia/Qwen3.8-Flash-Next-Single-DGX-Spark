@@ -93,5 +93,8 @@
 !/files/fp8_hybrid_modelopt.py.in
 !/files/fp8_convert.py
 !/files/make_fp8_hybrid.sh
+!/files/patch_qwen_tool_parser.sh
+!/files/patches/
+!/files/patches/*.patch
 !/.env.gb10.sample
 !/files/draft_vocab_es_en_code_65k.txt
