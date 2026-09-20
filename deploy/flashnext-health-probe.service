@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# systemd USER unit: the stateless health probe, on its own, without the
+# supervisor.
+#
+# scripts/health-probe.sh is read-only -- it GETs /health and asks for 16
+# tokens -- so it can run beside a server that something else owns. That is the
+# point of installing it alone: the 24/7 supervisor in systemd/ also drives
+# start.sh and stop.sh, and deploy/flashnext-vllm.service already does, so
+# running both would leave two things starting and stopping one container. The
+# probe competes with nothing.
+#
+# It alerts; it never acts. Recovery stays with whatever owns the server.
+[Unit]
+Description=Qwen3.8-Flash-Next health probe (no recovery, alert only)
+OnFailure=flashnext-alert@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=@RECIPE_DIR@
+ExecStart=@RECIPE_DIR@/scripts/health-probe.sh

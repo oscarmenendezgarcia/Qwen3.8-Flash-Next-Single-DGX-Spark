@@ -120,7 +120,9 @@
 # --- local: systemd units for this host (see HANDOFF.md) ---
 !/deploy/
 !/deploy/*.service
+!/deploy/*.timer
 !/deploy/install-unit.sh
+!/deploy/install-probes.sh
 !/bench/audit-spanish.py
 !/bench/audit-lexical.py
 !/bench/probe-logprobs.py

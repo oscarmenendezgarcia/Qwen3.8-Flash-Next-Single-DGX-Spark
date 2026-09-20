@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=Run the Qwen3.8-Flash-Next smoke test daily
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+Persistent=true
+AccuracySec=5min
+Unit=flashnext-smoke.service
+
+[Install]
+WantedBy=timers.target

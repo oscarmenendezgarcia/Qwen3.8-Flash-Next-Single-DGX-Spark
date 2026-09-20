@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# OnFailure target for the probe units: hands the failing unit's name to
+# alert.sh. With ALERT_WEBHOOK unset, alert.sh appends to logs/alert.log and
+# says so, so a box with no webhook still keeps a record.
+[Unit]
+Description=Alert that %i failed
+
+[Service]
+Type=oneshot
+WorkingDirectory=@RECIPE_DIR@
+ExecStart=@RECIPE_DIR@/scripts/alert.sh "PROBE: %i failed on %H"

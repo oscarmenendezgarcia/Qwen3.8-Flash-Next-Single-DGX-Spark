@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=Run the Qwen3.8-Flash-Next health probe every 5 minutes
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=flashnext-health-probe.service
+
+[Install]
+WantedBy=timers.target

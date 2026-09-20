@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# systemd USER unit: the full smoke test, daily, and only on an idle server.
+#
+# ExecCondition, not ExecStartPre: a busy server must SKIP the run, not fail it.
+# This is not hypothetical. Run against a server that a long-context battery was
+# hammering, the smoke test reported decode at 7.8 tok/s and failed; re-run on
+# an idle box, the same test gave 36.2. A timer that fires into live traffic
+# would alert on that number every time.
+#
+# Read-only like the probe: it generates, it does not restart anything.
+[Unit]
+Description=Qwen3.8-Flash-Next smoke test (skipped while the server is busy)
+OnFailure=flashnext-alert@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=@RECIPE_DIR@
+# Non-zero => skip silently. Also skips when /metrics is unreachable, which is
+# the server being down: that is the health probe's job to report, not this one's.
+ExecCondition=/usr/bin/env bash -c 'curl -s -m 10 http://127.0.0.1:${PORT:-8890}/metrics | grep -qE "^vllm:num_requests_running\\{[^}]*\\} 0(\\.0)?$"'
+ExecStart=@RECIPE_DIR@/scripts/smoke-test.sh
+TimeoutStartSec=900
