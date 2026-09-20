@@ -104,18 +104,11 @@ def main() -> None:
     # assemble "n-tilde" and the accents. The resulting drafter proposes badly
     # at exactly those boundaries.
     #
-    # The scan assumes the first 512 ids hold the byte-level alphabet and
-    # nothing else, which is a property of GPT-2-style byte-level BPE, not a
-    # general rule that single-character tokens are byte-level. Measured on this
-    # tokenizer: the predicate pins exactly 256 ids, contiguous over 0-255, all
-    # of them through `len(piece) == 1` and none through `<0x..>` -- Qwen maps
-    # each byte to one printable character ("!" .. "N-acute"), so the whole
-    # alphabet sits there and no other single-character token appears above it.
-    # The `<0x..>` branch is for SentencePiece-style byte fallback, which this
-    # tokenizer does not use; it costs nothing and covers that family. On a
-    # future tokenizer that puts an ordinary single-character token inside the
-    # first 512 ids, the predicate would pin it too -- harmless, one row, but
-    # worth knowing before widening the window.
+    # The scan assumes the first 512 ids are the byte-level alphabet, which is a
+    # property of GPT-2-style byte fallback, not a general rule that a
+    # single-character token is byte-level. Here it pins exactly 256 ids, 0-255,
+    # every one through `len(piece) == 1`; the `<0x..>` branch is for the
+    # SentencePiece spelling and never fires on this tokenizer.
     byte_level = set()
     for tid in range(min(512, vocab_size)):
         piece = tok.convert_ids_to_tokens(tid)
