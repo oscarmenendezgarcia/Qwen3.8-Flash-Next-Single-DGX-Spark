@@ -55,6 +55,40 @@ as promises.
   revision and taking theirs would have reinstated a claim this fork
   disproved.
 
+- **What the fp8 hybrid costs in correctness: nothing these tasks can see.**
+  Speed and spelling were measured when the hybrid was built; correctness was
+  not, which left the one gap that could have invalidated the swap. Absolute
+  pass rates on verifiable tasks, at production sampling: **7 of 8** generated
+  programs produced the exact expected value when executed (FizzBuzz, roman
+  numerals, anagram grouping, binary search, an LRU cache trace, matrix
+  rotation, bracket matching), and the eighth was an ambiguous prompt of the
+  harness's own making, not a model error. **3 of 3** multi-step tool loops
+  returned the exact right answer, chaining three calls and feeding results
+  back: 5334 and 15979.71 hab/km2 computed through the tools, not in the head.
+
+- **Needle in a haystack, never run on this build before: 9 of 9.** A needle at
+  10%, 50% and 90% depth, in contexts of 16,221, 64,785 and 129,523 real
+  tokens. The filler is deterministic but non-repeating Spanish prose, because
+  a repeated block compresses under attention and hands the model the answer.
+  Retrieved at every length and every depth.
+
+- **`scripts/smoke-test.sh` on this host: 7 passed, 0 failed, 1 warning.** The
+  warning is the known QSA top-k non-determinism at temperature 0. Worth
+  recording how the first run went, because it is a trap: it reported decode at
+  7.8 tok/s and failed, with a long-context battery hammering the same server.
+  Re-run on an idle box, the same test gives 36.2. Check
+  `vllm:num_requests_running` before believing a speed number.
+
+- **Wiring the 24/7 supervision needs a decision, not an install.** The
+  supervisor calls `start.sh` and `stop.sh`, and so does
+  `deploy/flashnext-vllm.service`; neither mentions the other. Running both
+  leaves two things starting and stopping one container. Either the supervisor
+  replaces the system unit, or only the stateless pieces go in --
+  `health-probe.sh`, `smoke-test.sh`, `memwatch` -- which compete with nothing.
+  `health-probe.sh` already exits 0 against this host unmodified. (The unit
+  paths assuming `~/qwen38-flash-next` are documented convention, not a
+  defect: the README says to adjust them.)
+
 - **Measured after all of the above, on one restart.** Lexical malformations
   28.7 per 10k against a 30.0 reference, 0/30 sustained drift; 13.0 per 10k
   and 0/20 on the drift-trigger battery; decode within noise on all four
