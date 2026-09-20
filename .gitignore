@@ -94,6 +94,7 @@
 !/files/fp8_convert.py
 !/files/make_fp8_hybrid.sh
 !/files/patch_qwen_tool_parser.sh
+!/files/patch_chat_template_effort.sh
 !/files/patches/
 !/files/patches/*.patch
 !/.env.gb10.sample

@@ -614,6 +614,20 @@ PARSER_DIR="$SCRIPT_DIR/files/parser/vllm"
 "$SCRIPT_DIR/files/patch_qwen_tool_parser.sh" >/dev/null
 [[ -f "$PARSER_DIR/parser/qwen3.py" ]] || err "parser patch missing after patch_qwen_tool_parser.sh"
 
+# reasoning_effort aliases. The checkpoint's template takes xhigh/medium/low and
+# raises on anything else, so a client sending the OpenAI-standard "high" gets a
+# 400. The rewrite maps high/max -> xhigh and minimal -> low and changes nothing
+# else: with the key absent, which is every current client here, the template
+# renders byte-identically. The script no-ops loudly if the template is not the
+# one it expects, so an unexpected checkpoint serves stock rather than something
+# nobody checked.
+EFFORT_TEMPLATE="$SCRIPT_DIR/files/chat_template_effort.jinja"
+"$SCRIPT_DIR/files/patch_chat_template_effort.sh" "$MODEL_PATH/$SNAPSHOT_REL" >/dev/null
+# Empty when the script declined to rewrite, so neither the flag nor the mount
+# is added. Guarding on the variable alone would mount a path that is not there
+# and docker would helpfully create a directory at it.
+[[ -f "$EFFORT_TEMPLATE" ]] || EFFORT_TEMPLATE=""
+
 # FP8 KV support for the QSA kernels. The patch is compiled out when the KV
 # cache is BF16, so it is applied unconditionally and costs nothing at KV_CACHE_DTYPE=auto.
 PATCHED_QSA_OPS="$SCRIPT_DIR/files/qsa_ops_patched.py"
@@ -693,6 +707,7 @@ VLLM_ARGS+=("--load-format" "safetensors")
 VLLM_ARGS+=("--safetensors-load-strategy" "lazy")
 VLLM_ARGS+=("--enable-chunked-prefill")
 VLLM_ARGS+=("--reasoning-parser" "qwen3")
+[[ -f "$EFFORT_TEMPLATE" ]] && VLLM_ARGS+=("--chat-template" "/root/chat_template_effort.jinja")
 VLLM_ARGS+=("--enable-auto-tool-choice")
 VLLM_ARGS+=("--tool-call-parser" "qwen3_coder")
 # REQUIRED for PLE offload: only multiproc_executor spawns the offload worker.
@@ -804,6 +819,7 @@ docker run \\
     -v $PARSER_DIR/parser/nemotron_v3.py:${PARSER_PKGS[1]}:ro \\
     -v $PARSER_DIR/parser/engine/parser_engine_config.py:${PARSER_PKGS[2]}:ro \\
     -v $PARSER_DIR/parser/engine/streaming_parser_engine.py:${PARSER_PKGS[3]}:ro \\
+    ${EFFORT_TEMPLATE:+-v $EFFORT_TEMPLATE:/root/chat_template_effort.jinja:ro} \\
     -v $OFFLOAD_DIR/ple_offload_layer.py:$VLLM_PKG/model_executor/layers/ple_offload_layer.py:ro \\
     -v $OFFLOAD_DIR/connector.py:$VLLM_PKG/v1/ple_offload/connector.py:ro \\
     -v $OFFLOAD_DIR/worker.py:$VLLM_PKG/v1/ple_offload/worker.py:ro \\
