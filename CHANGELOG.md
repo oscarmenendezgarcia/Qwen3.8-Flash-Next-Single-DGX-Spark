@@ -5,6 +5,52 @@ are grouped by date, newest first. Every measurement named here was taken on the
 one DGX Spark this repo is written for — treat them as that host's numbers, not
 as promises.
 
+## 2026-09-25 (later)
+
+- **The fp8 hybrid runs on stock vLLM 0.30, and the trade is capacity against
+  latency.** Three defects stood between this checkpoint and that lane, found by
+  instrumenting the failing launch rather than by guessing. Measured on one GB10
+  against the pinned-image lane serving the same weights:
+
+  | | pinned image | vLLM 0.30 + hybrid | upstream's 0.30 lane |
+  |---|---|---|---|
+  | KV pool | 486,172 tok (1.74x @262k) | **801,076 (3.06x)** | 801k |
+  | prefill 1k / 16k / 131k | 1,546 / 2,361 / 2,230 | **+32.8% / +22.7% / +27.7%** | +9.6% |
+  | decode code / prose | 61.1 / 46.7 | 55.5 / 42.6 | 54.5 / 36.8 |
+  | decode structured / json | 62.3 / 55.5 | 60.4 / 53.4 | - |
+  | lexical audit | 20.6-30.0 per 10k, 0/30 drift | **16.3 per 10k, 0/30** | - |
+  | repo smoke test | 7/0/1 | **7/0/1** | - |
+
+  Prose decode is the line that shows the hybrid working: 36.8 on their lane,
+  42.6 here, because the dense layers stay fp8 instead of BF16. Against the
+  pinned image it is still 3-9% slower, which is 0.30 or the fp8 KV, not the
+  quantization. Tools and vision both round-trip.
+
+- **What had to be fixed, in the order it broke:**
+  1. `files/make_v030_metadata.py` -- declare the converted dense layers as
+     **FP8_PB_WO** (not FP8_BLOCK_SCALES, which resolves for MoE only) and drop
+     them from the exclusion list, which NVIDIA populates precisely because
+     NVIDIA leaves them in BF16.
+  2. `files/patch_v030_reasoning.py` -- ReasoningConfig refuses to build because
+     it validates '<think>'/'</think>' against a placeholder tokenizer. Captured:
+     `tok_type=CachedQwen3_5Tokenizer vocab=1`, every encode returning `[]`,
+     while the same class loaded from the same snapshot reports 248,044. No CLI
+     knob picks the tokenizer, so the raise becomes a warning -- which is what
+     the function already does one branch above when the strings are absent.
+     Reproduced with the plain nvidia snapshot, so it is upstream's, not ours.
+  3. **Relative symlinks in the variant snapshot.** Absolute ones resolve on the
+     host and dangle inside the container, where the cache is mounted at a
+     different path. It surfaces as "Can't load image processor", nowhere near
+     its cause. That one was ours.
+  4. `files/patch_v030_block_fp8_linear.py` -- 0.30 routes block-scaled fp8
+     *linear* layers to ModelOptLinearMethod, which reads the per-tensor
+     convention, so a weight_scale_inv checkpoint dies as
+     `'MergedColumnParallelLinear' object has no attribute 'data'`. The MoE
+     branch two lines below already routes to `Fp8MoEMethod(fp8_block_config)`;
+     this adds the same branch for linear. Worth sending to vLLM, not just here.
+
+  Not adopted. The lane is behind V030=true and the production lane is unchanged.
+
 ## 2026-09-25
 
 ### Added

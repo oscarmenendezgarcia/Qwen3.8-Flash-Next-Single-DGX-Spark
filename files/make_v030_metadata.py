@@ -80,8 +80,19 @@ def main() -> None:
         if name in rewritten:
             continue
         link = os.path.join(dst, name)
-        if not os.path.lexists(link):
-            os.symlink(os.path.realpath(os.path.join(src, name)), link)
+        if os.path.lexists(link):
+            continue
+        # RELATIVE targets, always. An HF snapshot links into ../../blobs, and the
+        # container mounts the cache at a different absolute path than the host
+        # (/root/.cache/huggingface against ~/.cache/huggingface), so an absolute
+        # link resolves on the host and dangles inside the engine. That failure
+        # surfaces far from its cause: "Can't load image processor for <snapshot>".
+        entry = os.path.join(src, name)
+        if os.path.islink(entry):
+            target = os.readlink(entry)          # already relative to the snapshot
+        else:
+            target = os.path.join("..", os.path.basename(src), name)
+        os.symlink(target, link)
 
     for name in sorted(rewritten):
         doc = json.load(open(os.path.join(src, name), encoding="utf-8"))
