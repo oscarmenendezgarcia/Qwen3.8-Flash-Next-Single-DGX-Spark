@@ -118,7 +118,8 @@ _ENV_SNAPSHOT_VARS=(KV_TARGET_GIB HOST_RESERVE_GIB HOST_SLACK_GIB OS_RESERVE_GIB
                     EXTRA_VLLM_ARGS EXTRA_DOCKER_ARGS NATIVE_MAX_MODEL_LEN
                     YARN_CEILING_MODEL_LEN BIND READY_TIMEOUT_S API_KEY
                     VLLM_QSA_DET_TOPK VLLM_MOE_DET_FINALIZE GDN_DECODE_KERNEL
-                    MTP_DISABLE_BLOCK_DROP CHAT_TEMPLATE V030 V030_KV_GIB)
+                    MTP_DISABLE_BLOCK_DROP CHAT_TEMPLATE V030 V030_KV_GIB
+                    TP1_MODEL_ID TP1_SNAPSHOT)
 for _v in "${_ENV_SNAPSHOT_VARS[@]}"; do
     eval "_SNAP_$_v=\${$_v-}"
     eval "_SNAPSET_$_v=\${$_v+set}"
@@ -665,6 +666,12 @@ extract() {  # <path-in-image> <dest>
         docker rm "$tmp" >/dev/null 2>&1
     fi
 }
+# La via v030 no prepara los parches de la imagen fijada, asi que estas dos
+# quedaban sin asignar en esa rama y `set -u` las cazaba mas abajo. Vacias
+# aqui: en 0.30 no hay parser parcheado ni plantilla de effort, porque ambos
+# parches apuntan a ficheros de la imagen fijada.
+EFFORT_TEMPLATE=""
+PARSER_DIR=""
 if [[ "$V030" == "true" ]]; then
     V030_NVIDIA_REL="models/qwen4_exp/nvidia"
     V030_FP8KV_DIR="$SCRIPT_DIR/files/v030_fp8kv"
