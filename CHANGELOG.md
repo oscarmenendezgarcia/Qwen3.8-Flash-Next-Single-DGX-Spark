@@ -47,7 +47,19 @@ as promises.
      convention, so a weight_scale_inv checkpoint dies as
      `'MergedColumnParallelLinear' object has no attribute 'data'`. The MoE
      branch two lines below already routes to `Fp8MoEMethod(fp8_block_config)`;
-     this adds the same branch for linear. Worth sending to vLLM, not just here.
+     this adds the same branch for linear.
+
+     **Correction, same day: this is not an upstream bug.** vLLM routes
+     FP8_PB_WO linear layers to ModelOptLinearMethod deliberately, and
+     `tests/quantization/test_modelopt.py::test_modelopt_mixed_precision_dispatches_every_linear_algo`
+     asserts exactly that for every algo in LINEAR_ALGOS. That path does handle
+     128x128 block fp8; what differs is the scale tensor name. ModelOpt reads
+     `weight_scale`, this recipe's converter writes `weight_scale_inv` -- the
+     DeepSeek convention, which the pinned image's shim and vLLM's own
+     Fp8LinearMethod expect. So the patch is an adapter for our naming, not a
+     fix for theirs, and no PR to vLLM was opened. Emitting `weight_scale`
+     instead would need no patch at all, at the cost of a second converted
+     checkpoint (~71 GiB) because the pinned lane reads the other name.
 
   Not adopted. The lane is behind V030=true and the production lane is unchanged.
 

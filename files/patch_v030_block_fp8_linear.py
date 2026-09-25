@@ -1,9 +1,27 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""vLLM 0.30: route block-scaled fp8 LINEAR layers to vLLM's own Fp8 method.
+"""Adapt this recipe's scale naming to ModelOpt's on the vLLM 0.30 lane.
 
-ModelOptMixedPrecisionConfig advertises support for "FP8 for dense layers and
-NVFP4 for MoE experts", and for the MoE half it does the right thing:
+NOT an upstream bug, and not a candidate for a PR -- that was the first reading
+and it was wrong. vLLM routes FP8_PB_WO linear layers to ModelOptLinearMethod on
+purpose, and `tests/quantization/test_modelopt.py` guards it:
+
+    @pytest.mark.parametrize("algo", list(LINEAR_ALGOS))
+    def test_modelopt_mixed_precision_dispatches_every_linear_algo(algo):
+        ...
+        assert isinstance(method, ModelOptLinearMethod)
+
+That path does support 128x128 block fp8 -- `resolve()` returns
+QuantSpec(weight=kFp8Static128BlockSym, ...) and names CompressedTensors block
+FP8 as its reference. The mismatch is the SCALE TENSOR NAME. ModelOpt's linear
+path reads `weight_scale` (`process_weights_after_loading` touches
+`layer.weight_scale`); files/fp8_convert.py writes `weight_scale_inv`, the
+DeepSeek convention, which is what the pinned image's shim and vLLM's own
+Fp8LinearMethod expect.
+
+So this patch is an adapter for OUR convention, not a fix for theirs: it sends
+block-scaled fp8 linear layers to the Fp8 method that reads the names we wrote,
+the same object the RoutedExperts branch already uses:
 
     if quant_algo in _BLOCK_FP8_MOE_ALGOS:
         return Fp8MoEMethod(self.fp8_block_config, layer)
@@ -27,8 +45,12 @@ against 486,172 (3.06x against 1.74x at 262k), prefill +23% to +33%, decode -3%
 to -9%, lexical audit 16.3 malformations per 10k with 0/30 drift, and the repo
 smoke test at 7 passed / 0 failed / 1 known warning.
 
-Needs the layers declared: see files/make_v030_metadata.py. Drop this patch if
-upstream routes block-scaled fp8 linear layers itself.
+Needs the layers declared: see files/make_v030_metadata.py.
+
+The alternative, which would need no patch at all, is to emit `weight_scale`
+instead of `weight_scale_inv`. That means a second converted checkpoint, because
+the pinned-image lane reads the other name -- another ~71 GiB against 100 GiB
+free. Worth doing only if the 0.30 lane is adopted.
 """
 import os
 import sys
