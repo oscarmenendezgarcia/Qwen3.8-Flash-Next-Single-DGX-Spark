@@ -5,6 +5,39 @@ are grouped by date, newest first. Every measurement named here was taken on the
 one DGX Spark this repo is written for — treat them as that host's numbers, not
 as promises.
 
+## 2026-09-26
+
+- **Weight loading is 3.9x faster, and that is what makes everything else
+  affordable.** Four patches from blazux/qwen3.8-Flash-DGX (Apache-2.0, vendored
+  verbatim in `files/loadfast/vendor` with a NOTICE), driven by
+  `files/patch_load_fast.sh` and mounted by start.sh. Measured here:
+
+  | | before | after |
+  |---|---|---|
+  | weight loading | 672.9 s | **171.5 s** |
+  | whole startup, stop to first 200 | ~700 s | **305 s** |
+  | KV pool | 486,172 tok | 480,726 (same band) |
+  | decode code / prose | 61.1 / 46.7 | 59.5 / 48.6 |
+  | lexical audit | 20.6-30.0 per 10k, 0/30 drift | 18.8 per 10k, 0/30 |
+
+  What they do: clone mmap-backed MoE weights before the H2D copy (a pageable
+  copy from a file-backed page costs ~1.7 ms per 800 KiB tensor on GB10 against
+  ~0.23 ms from ordinary memory, and this checkpoint has ~149k of them), read
+  tensors under 64 MiB with pread instead of yielding mmap views, index MoE
+  weights by name, and chunk the embedding copy.
+
+  The output is unchanged, which is the only part their measurements could not
+  settle for this host: decode moved -2.6% on code and +4.0% on prose -- noise in
+  both directions, where a change to the weights would have pushed both down --
+  and the lexical audit sits inside its historical band with no drift. Default
+  on; `LOAD_FAST=0` turns it off, and the patcher no-ops loudly if any patch
+  stops applying, so a stock load is always the fallback.
+
+  Their patch 18 (MTP name prefilter, 12 -> 1.2 s on the drafter) is not taken:
+  it anchors on a `load_weights` return site that `patch_mtp_draft_vocab.py` has
+  already rewritten, so it needs the MTP patch chain reordered for ~11 s of a
+  ~500 s saving.
+
 ## 2026-09-25 (later)
 
 - **The fp8 hybrid runs on stock vLLM 0.30, and the trade is capacity against

@@ -119,7 +119,7 @@ _ENV_SNAPSHOT_VARS=(KV_TARGET_GIB HOST_RESERVE_GIB HOST_SLACK_GIB OS_RESERVE_GIB
                     YARN_CEILING_MODEL_LEN BIND READY_TIMEOUT_S API_KEY
                     VLLM_QSA_DET_TOPK VLLM_MOE_DET_FINALIZE GDN_DECODE_KERNEL
                     MTP_DISABLE_BLOCK_DROP CHAT_TEMPLATE V030 V030_KV_GIB
-                    TP1_MODEL_ID TP1_SNAPSHOT)
+                    TP1_MODEL_ID TP1_SNAPSHOT LOAD_FAST)
 for _v in "${_ENV_SNAPSHOT_VARS[@]}"; do
     eval "_SNAP_$_v=\${$_v-}"
     eval "_SNAPSET_$_v=\${$_v+set}"
@@ -758,6 +758,27 @@ extract "$MTP_PKG" "$PATCHED_MTP.orig"
 python3 "$SCRIPT_DIR/files/patch_mtp_draft_vocab.py"
 [[ -f "$PATCHED_MTP" ]] || err "MTP patch missing after patch_mtp_draft_vocab.py"
 
+# Fast weight loading (files/patch_load_fast.sh, blazux patches 14-17). A launch
+# here spent 672 s loading weights, which made every experiment cost eleven
+# minutes; their measurements put the main model at 541 -> 35 s. Default on, and
+# LOAD_FAST=0 turns it off -- the patcher also no-ops loudly if any patch stops
+# applying to the pinned image, so a stock load is always the fallback.
+LOAD_FAST="${LOAD_FAST:-1}"
+LOADFAST_MOUNTS=""
+if [[ "$LOAD_FAST" == 1 ]]; then
+    LOADFAST_DIR="$SCRIPT_DIR/files/loadfast"
+    LOADFAST_FILES=$(bash "$SCRIPT_DIR/files/patch_load_fast.sh" --list)
+    for f in $LOADFAST_FILES; do
+        mkdir -p "$(dirname "$LOADFAST_DIR/orig/$f")"
+        extract "$VLLM_PKG/$f" "$LOADFAST_DIR/orig/$f"
+    done
+    bash "$SCRIPT_DIR/files/patch_load_fast.sh" >/dev/null
+    for f in $LOADFAST_FILES; do
+        # Absent when the patcher declined: mount nothing rather than a stale copy.
+        [[ -f "$LOADFAST_DIR/$f" ]] && LOADFAST_MOUNTS+=" -v $LOADFAST_DIR/$f:$VLLM_PKG/$f:ro"
+    done
+fi
+
 # vllm#53388 backport: without it the image ignores "disable_eagle_block_drop".
 BLOCK_DROP_MOUNTS=""
 if [[ "$MTP_DISABLE_BLOCK_DROP" == 1 && "$MTP_NUM_SPECULATIVE_TOKENS" -gt 0 ]]; then
@@ -1237,6 +1258,7 @@ docker run \\
     ${HF_TOKEN:+-e HF_TOKEN=\$HF_TOKEN} \\
     $OVERLAY_MOUNTS \\
     $BLOCK_DROP_MOUNTS \\
+    $LOADFAST_MOUNTS \\
     $OFFLOAD_MOUNTS \\
     -v $HF_CACHE_DIR:/root/.cache/huggingface \\
     -v $HOME/.cache/vllm:/root/.cache/vllm \\
