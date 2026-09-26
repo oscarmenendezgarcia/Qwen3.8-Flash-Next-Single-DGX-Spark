@@ -5,6 +5,40 @@ are grouped by date, newest first. Every measurement named here was taken on the
 one DGX Spark this repo is written for — treat them as that host's numbers, not
 as promises.
 
+## 2026-09-26 (K sweep)
+
+- **MTP K stays at 3, and the sweep says why.** bilikaz/qwen38-flash-next-recipe
+  reports 5.1 accepted tokens per step at K=5 against 3.4 at K=3, so the knob
+  looked free. Measured here over the legal set -- `{0,2,3,4,9..12}`, because
+  `capacity = ratio * ceil((ratio + k) / ratio)` must divide the 848 attention
+  block and k=5 gives 12, which does not:
+
+  | K | code | prose | acceptance | tokens/step | KV pool |
+  |---|---|---|---|---|---|
+  | **3** | 57.0 | **49.6** | 76.6% | 3.30 | **760,071** |
+  | 4 | 58.9 | 45.2 | 63.2% | 3.53 | 676,965 |
+  | 9 | **68.3** | 32.5 | 37.9% | 4.41 | 669,621 |
+  | 12 | 52.4 | 35.1 | 32.4% | 4.89 | 616,038 |
+
+  The mechanism reproduces exactly as they describe it: acceptance per draft
+  token collapses (76.6% -> 37.9%) while tokens per step rise (3.30 -> 4.41),
+  and the second number is the one that pays. But the effect splits by workload.
+  **Code at K=9 is +20%. Prose at K=9 is -34%.** The curve also elbows at 12,
+  where tokens per step still rise and code falls to 52.4 -- the same shape the
+  27B sweep found before its last legal value.
+
+  The pool cost is monotonic: 760k -> 616k, 144k tokens eaten by the MTP ring.
+
+  Left at 3 deliberately. The one workload that gains is code, this host's real
+  traffic is agent sessions that mix code and prose, and a 34% prose regression
+  is too much for a gain measured on synthetic probes. `MTP_K_SCHEDULE` exists
+  for exactly this shape of result and is the honest next step, not a flat K.
+
+  Note for anyone comparing with their numbers: they sample the drafts
+  (`draft_sample_method: probabilistic`) where this recipe runs
+  `use_local_argmax_reduction`, so how many survive verification differs. Raising
+  K alone does not reproduce their 5.1.
+
 ## 2026-09-26
 
 - **Weight loading is 3.9x faster, and that is what makes everything else
