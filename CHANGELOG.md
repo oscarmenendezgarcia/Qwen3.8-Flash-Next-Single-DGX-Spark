@@ -5,6 +5,22 @@ are grouped by date, newest first. Every measurement named here was taken on the
 one DGX Spark this repo is written for — treat them as that host's numbers, not
 as promises.
 
+## 2026-09-28 (load format)
+
+- **`fastsafetensors` cannot load this model on this host, and the reason is
+  structural.** It is installed in the pinned image and now reachable through
+  `LOAD_FORMAT=fastsafetensors`, but it stages each shard through a GPU buffer:
+
+    torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 8.93 GiB.
+    GPU 0 has a total capacity of 121.63 GiB of which 1.57 GiB is free.
+
+  On unified memory the 9 GiB it wants is the same 9 GiB the KV pool is sized to
+  use, so there is no reserve to give it without shrinking the pool by more than
+  faster loading could be worth. The default stays `safetensors` with the lazy
+  strategy, which the vendored blazux patches already took from 672 s to 171 s
+  by reading with pread into mapped host memory instead. The knob is kept because
+  the failure is worth being able to reproduce in one line.
+
 ## 2026-09-26 (K sweep)
 
 - **MTP K stays at 3, and the sweep says why.** bilikaz/qwen38-flash-next-recipe

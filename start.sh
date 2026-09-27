@@ -108,7 +108,7 @@ _CLI_READY_TIMEOUT_S="${READY_TIMEOUT_S:-}"
 # Knobs that are NOT read through an explicit _CLI_ variable above still have
 # to honour "environment > .env": sourcing .env would otherwise overwrite them.
 # Snapshot anything set in the environment, then restore it after the source.
-_ENV_SNAPSHOT_VARS=(KV_TARGET_GIB HOST_RESERVE_GIB HOST_SLACK_GIB OS_RESERVE_GIB
+_ENV_SNAPSHOT_VARS=(KV_TARGET_GIB HOST_RESERVE_GIB HOST_SLACK_GIB OS_RESERVE_GIB LOAD_FORMAT
                     MEMWATCH_MIN_GIB MEMWATCH_MIN_FREE_GIB MEMWATCH_FREE_GATE_GIB MEMWATCH_GRACE
                     OVERHEAD_GIB PLE_GIB CONTAINER_MEM_GIB KV_CACHE_MEMORY
                     MAMBA_SSM_CACHE_DTYPE
@@ -972,8 +972,14 @@ if [[ -n "$YARN_FACTOR" ]]; then
     # existing mrope_section / rope_theta / partial_rotary_factor survive.
     VLLM_ARGS+=("--hf-overrides" "$(printf "'{\"text_config\":{\"rope_parameters\":{\"rope_type\":\"yarn\",\"factor\":%s,\"original_max_position_embeddings\":%s}}}'" "$YARN_FACTOR" "$NATIVE_MAX_MODEL_LEN")")
 fi
-VLLM_ARGS+=("--load-format" "safetensors")
-VLLM_ARGS+=("--safetensors-load-strategy" "lazy")
+# LOAD_FORMAT: "safetensors" (default) or "fastsafetensors". The lazy strategy
+# is a safetensors-only flag, and fastsafetensors does its own reading, so the
+# two are alternatives rather than a stack -- and fastsafetensors bypasses the
+# blazux load patches LOAD_FAST mounts, which is why they are measured apart.
+VLLM_ARGS+=("--load-format" "${LOAD_FORMAT:-safetensors}")
+if [ "${LOAD_FORMAT:-safetensors}" = "safetensors" ]; then
+  VLLM_ARGS+=("--safetensors-load-strategy" "lazy")
+fi
 VLLM_ARGS+=("--enable-chunked-prefill")
 VLLM_ARGS+=("--reasoning-parser" "qwen3")
 VLLM_ARGS+=("--enable-auto-tool-choice")
