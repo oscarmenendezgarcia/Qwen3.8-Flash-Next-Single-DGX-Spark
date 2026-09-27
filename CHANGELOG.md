@@ -30,6 +30,18 @@ as promises.
   The ranges do not overlap on any of the four, so the gain is real, uniform and
   small: 3-4%, not the 8% a single shot suggested.
 
+  It does not turn into a penalty under load, which was the risk worth checking:
+  the activation scale is computed per token on every call, so the cost grows
+  with the batch while the byte saving matters less. Three measurements per cell,
+  medians, 300 tokens per request:
+
+  | | bf16 | fp8 | |
+  |---|---|---|---|
+  | code, 4 concurrent | 34.34 | 34.63 | +0.8% (spreads overlap) |
+  | code, 8 concurrent | 33.50 | 34.73 | +3.7% |
+  | prose, 4 concurrent | 28.21 | 29.66 | +5.1% |
+  | prose, 8 concurrent | 28.23 | 29.97 | +6.2% |
+
   Quality holds: 22.9 malformations per 10k over 30 generations, inside the
   14.4-30.0 band the bf16 head measures, sustained drift 0/30, and every
   candidate the auditor flagged is a real Spanish word (*rojinegros*, *clúster*,
