@@ -5,6 +5,34 @@ are grouped by date, newest first. Every measurement named here was taken on the
 one DGX Spark this repo is written for — treat them as that host's numbers, not
 as promises.
 
+## 2026-09-28 (drafting: reduced vocabulary vs probabilistic)
+
+- **Probabilistic drafting is a net loss here, and not because it is slow.**
+  `MTP_DRAFT_SAMPLE` now exposes `draft_sample_method`. vLLM refuses to pair it
+  with reduced-vocabulary drafting, deliberately -- speculator.py:
+  "use_local_argmax_reduction is not compatible with
+  draft_sample_method='probabilistic'" -- and `get_top_tokens()` is the only path
+  that reads the reduced head. So the choice is not greedy vs probabilistic, it
+  is reduced vocabulary vs probabilistic. Three measurements per cell, medians,
+  K=3, fp8 KV, reserve 30:
+
+  | | code | prose | acceptance | KV pool |
+  |---|---|---|---|---|
+  | **greedy + 65k reduced (production)** | **57.25** | **46.21** | 76.6% | **811,328** |
+  | greedy + full 248k | 47.96 | 38.62 | 74.2% | 793,754 |
+  | probabilistic + full 248k | 47.79 | 37.13 | 73.7% | 771,787 |
+
+  At equal vocabulary probabilistic costs almost nothing (-0.4% code, -3.9%
+  prose, within the spread on code). The whole difference is the reduced
+  vocabulary, and this is the first time its contribution has been measured on
+  its own: **+19% code, +20% prose, and 17,574 more tokens of KV pool**, for a
+  drafter that reads 0.31 GiB per draft step instead of 1.18.
+
+  What was NOT measured is the argument for probabilistic drafting: it samples
+  the drafter's proposals from its distribution rather than taking the argmax,
+  which matters for output diversity at temperature > 0, not for throughput. If
+  that is ever wanted, it costs the 19-20% above.
+
 ## 2026-09-26 (K sweep)
 
 - **MTP K stays at 3, and the sweep says why.** bilikaz/qwen38-flash-next-recipe

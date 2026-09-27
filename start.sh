@@ -114,7 +114,7 @@ _ENV_SNAPSHOT_VARS=(KV_TARGET_GIB HOST_RESERVE_GIB HOST_SLACK_GIB OS_RESERVE_GIB
                     MAMBA_SSM_CACHE_DTYPE
                     IMAGE SERVED_MODEL_NAME CUDAGRAPH_MODE HF_TOKEN
                     CUDAGRAPH_CAPTURE_SIZES COMPILATION_MODE MTP_K_SCHEDULE
-                    MTP_DRAFT_VOCAB
+                    MTP_DRAFT_VOCAB MTP_DRAFT_SAMPLE
                     EXTRA_VLLM_ARGS EXTRA_DOCKER_ARGS NATIVE_MAX_MODEL_LEN
                     YARN_CEILING_MODEL_LEN BIND READY_TIMEOUT_S API_KEY
                     VLLM_QSA_DET_TOPK VLLM_MOE_DET_FINALIZE GDN_DECODE_KERNEL
@@ -1108,6 +1108,19 @@ if [[ "$MTP_NUM_SPECULATIVE_TOKENS" -gt 0 ]]; then
     # backport whenever this key is merged.
     [[ "$MTP_DISABLE_BLOCK_DROP" == "1" ]] && _SPEC_ARGMAX+=',"disable_eagle_block_drop":true'
     [[ "${V030:-}" == "true" ]] && _SPEC_ARGMAX+=',"index_share_for_mtp_iteration":true'
+    # MTP_DRAFT_SAMPLE: "greedy" (default) or "probabilistic". The two are
+    # mutually exclusive with reduced-vocabulary drafting, and not by accident --
+    # vllm/v1/worker/gpu/spec_decode/speculator.py refuses the pair outright:
+    #   "use_local_argmax_reduction is not compatible with
+    #    draft_sample_method='probabilistic'."
+    # So probabilistic drafting means MTP_DRAFT_VOCAB="" and the drafter reading
+    # the full 248,320-row head on every draft step.
+    if [[ -n "${MTP_DRAFT_SAMPLE:-}" ]]; then
+        if [[ "$MTP_DRAFT_SAMPLE" == "probabilistic" && -n "$MTP_DRAFT_VOCAB" ]]; then
+            err "MTP_DRAFT_SAMPLE=probabilistic needs MTP_DRAFT_VOCAB empty: vLLM rejects the pair."
+        fi
+        _SPEC_ARGMAX+=",\"draft_sample_method\":\"$MTP_DRAFT_SAMPLE\""
+    fi
     _SPEC_SCHED=""
     if [[ -n "$MTP_K_SCHEDULE" ]]; then
         _SPEC_SCHED=",\"num_speculative_tokens_per_batch_size\":[$(
