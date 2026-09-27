@@ -7,20 +7,28 @@ as promises.
 
 ## 2026-09-28 (fp8 output head)
 
-- **The output head serves in fp8, and it is worth 3-8% of decode.** lm_head is
+- **The output head serves in fp8, and it is worth 3-4% of decode.** lm_head is
   248,320 x 2,560: 1.18 GiB of the 5.57 GB a decode step reads on this host,
   22.8% of the byte budget and the largest single tensor left in bf16. Halved,
   behind `LM_HEAD_QUANT=1` (default off) with the `-fp8hybrid-head` snapshot:
 
+  Four measurements per prompt type per configuration, first discarded as
+  warm-up, median of the rest -- a single shot read +7.7% on code where the
+  repeats say +3.0%, and one earlier prose baseline in this file (49.6, the K
+  sweep) is an outlier against the 44.5-47.1 the repeats spread over:
+
   | | bf16 head | fp8 head | |
   |---|---|---|---|
-  | decode, code | 57.0 | **61.38** | +7.7% |
-  | decode, prose | 45.9 | **47.12** | +2.7% |
-  | decode, structured | 62.2 | **65.19** | +4.8% |
-  | decode, json | 53.3 | **54.88** | +3.0% |
-  | drafter acceptance | 76.6% | 78.5% | +1.9 pt |
+  | decode, code | 57.25 (56.5-57.9) | **58.95** (58.5-60.4) | +3.0% |
+  | decode, prose | 46.21 (44.5-47.1) | **47.94** (47.8-50.2) | +3.7% |
+  | decode, structured | 62.49 (62.0-62.8) | **65.21** (63.5-65.4) | +4.4% |
+  | decode, json | 52.79 (52.0-53.5) | **54.86** (54.4-56.8) | +3.9% |
+  | drafter acceptance | 76.6% | 79.9% | +3.3 pt |
   | weights | 74.06 GiB | 73.47 GiB | -0.59 |
   | KV pool | 811,328 | **845,011** | +33,683 |
+
+  The ranges do not overlap on any of the four, so the gain is real, uniform and
+  small: 3-4%, not the 8% a single shot suggested.
 
   Quality holds: 22.9 malformations per 10k over 30 generations, inside the
   14.4-30.0 band the bf16 head measures, sustained drift 0/30, and every
