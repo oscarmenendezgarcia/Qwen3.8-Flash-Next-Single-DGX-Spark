@@ -21,6 +21,14 @@ forced rather than chosen:
     claims layers carrying `.weight_scale_inv`. The head falls through to the
     ModelOpt path, which is the one that can serve it. No shim change.
 
+Per-tensor there means the WEIGHT scale. ModelOptFp8LinearMethod is also static
+on the ACTIVATION side, and it reads that scale from a checkpoint `input_scale`
+that only a calibrated ModelOpt export carries -- absent it, the sentinel it
+initialises (-3.4e38) is what quantizes the hidden states, and the logits come
+out as noise. This script deliberately does not invent one: no calibration pass
+was run, so there is no honest number to write. files/patch_lm_head_quant.py
+gives the head a runtime per-token activation scale instead.
+
 Writes a snapshot of relative symlinks beside the hybrid, with only the shard
 holding lm_head rewritten (5.6 GB of the 71), the index extended with the new
 scale tensor, and lm_head declared FP8 in quantized_layers and dropped from the

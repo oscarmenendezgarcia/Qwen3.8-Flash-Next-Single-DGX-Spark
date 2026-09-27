@@ -5,6 +5,56 @@ are grouped by date, newest first. Every measurement named here was taken on the
 one DGX Spark this repo is written for — treat them as that host's numbers, not
 as promises.
 
+## 2026-09-28 (fp8 output head)
+
+- **The output head serves in fp8, and it is worth 3-8% of decode.** lm_head is
+  248,320 x 2,560: 1.18 GiB of the 5.57 GB a decode step reads on this host,
+  22.8% of the byte budget and the largest single tensor left in bf16. Halved,
+  behind `LM_HEAD_QUANT=1` (default off) with the `-fp8hybrid-head` snapshot:
+
+  | | bf16 head | fp8 head | |
+  |---|---|---|---|
+  | decode, code | 57.0 | **61.38** | +7.7% |
+  | decode, prose | 45.9 | **47.12** | +2.7% |
+  | decode, structured | 62.2 | **65.19** | +4.8% |
+  | decode, json | 53.3 | **54.88** | +3.0% |
+  | drafter acceptance | 76.6% | 78.5% | +1.9 pt |
+  | weights | 74.06 GiB | 73.47 GiB | -0.59 |
+  | KV pool | 811,328 | **845,011** | +33,683 |
+
+  Quality holds: 22.9 malformations per 10k over 30 generations, inside the
+  14.4-30.0 band the bf16 head measures, sustained drift 0/30, and every
+  candidate the auditor flagged is a real Spanish word (*rojinegros*, *clúster*,
+  *carritos*, *oralidad*). Acceptance did not degrade, which is the check that
+  mattered: the drafter reads the same head.
+
+  The gain is smaller than the 10.6% of bytes removed, and that is expected --
+  only the head shrinks, while the dense layers and the active experts do not,
+  and the activation scale is now computed per token on every call.
+
+- **ModelOpt's fp8 linear is static on the activation side too, and that is what
+  made the first working head produce noise.** `ModelOptFp8LinearMethod`
+  initialises `input_scale` to `finfo(float32).min` and overwrites it only from a
+  checkpoint `input_scale`, which a calibrated ModelOpt export carries and a head
+  converted from bf16 does not. The head then quantized hidden states by
+  -3.4e38: the model served, generations came back as cross-script gibberish and
+  drafter acceptance fell to 3.3%. No calibration pass was run and none was
+  invented -- `files/patch_lm_head_quant.py` wraps the config so the head gets a
+  runtime per-token activation scale (`kFp8DynamicTokenSym`), which needs no
+  calibration data and is more accurate than one static per-tensor scale.
+
+- **Two further blockers on the way there, both worth recording.** The drafter's
+  reduced vocabulary slices rows out of `lm_head.weight` and feeds them to a
+  plain `torch.nn.functional.linear`, which has no fp8 kernel
+  (`NotImplementedError: "addmm_cuda" not implemented for 'Float8_e4m3fn'`);
+  `files/patch_mtp_draft_vocab.py` now dequantizes that slice to bf16, which is
+  free -- it was already a bf16-sized copy, and a positive per-tensor scale
+  leaves the argmax it feeds untouched. Before that, an
+  `AttributeError: 'MergedColumnParallelLinear' object has no attribute 'data'`
+  was blamed on the head patch for an afternoon; the cause was passing
+  `EXTRA_DOCKER_ARGS` by environment, which start.sh's `_ENV_SNAPSHOT_VARS`
+  makes REPLACE the .env value, silently dropping `VLLM_FP8_HYBRID=1`.
+
 ## 2026-09-26 (K sweep)
 
 - **MTP K stays at 3, and the sweep says why.** bilikaz/qwen38-flash-next-recipe
