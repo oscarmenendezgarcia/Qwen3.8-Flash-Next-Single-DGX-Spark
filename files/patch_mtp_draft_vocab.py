@@ -67,30 +67,18 @@ def _attach_draft_vocab(model: nn.Module) -> None:
         return
 
     index = torch.tensor(ids, dtype=torch.long, device=weight.device)
-    rows = weight.data.index_select(0, index).contiguous()
-    if rows.dtype in (torch.float8_e4m3fn, torch.float8_e4m3fnuz):
-        # get_top_tokens() below feeds this slice to a plain linear, which has
-        # no fp8 kernel. The drafter only needs the argmax, and a positive
-        # per-tensor scale leaves the argmax untouched; every e4m3 value is
-        # exact in bf16, so dequantising here costs no accuracy and no extra
-        # memory (the slice was already a bf16-sized copy).
-        rows = rows.to(torch.bfloat16)
-        head_scale = getattr(lm_head, "weight_scale", None)
-        if head_scale is not None and head_scale.numel() == 1:
-            rows = rows * head_scale.to(torch.bfloat16).reshape(())
-        else:
-            logger.warning(
-                "MTP draft vocab: fp8 head without a scalar weight_scale; "
-                "drafting on unscaled logits (the argmax is unaffected)."
-            )
-    model.register_buffer("_draft_lm_head_weight", rows, persistent=False)
+    model.register_buffer(
+        "_draft_lm_head_weight",
+        weight.data.index_select(0, index).contiguous(),
+        persistent=False,
+    )
     model.register_buffer(
         "_draft_id_to_target_id",
         index.to(torch.int32),
         persistent=False,
     )
     full_gib = weight.numel() * weight.element_size() / 2**30
-    cut_gib = rows.numel() * rows.element_size() / 2**30
+    cut_gib = model._draft_lm_head_weight.numel() * weight.element_size() / 2**30
     logger.info(
         "MTP draft vocab: %d of %d tokens (%.1f%%); draft lm_head %.2f -> %.2f "
         "GiB per draft step, %.2f GiB saved per step at MTP %d",

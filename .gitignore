@@ -159,8 +159,6 @@
 !/files/fp8_convert.py
 !/files/make_fp8_hybrid.sh
 !/files/make_v030_metadata.py
-!/files/fp8_head_convert.py
-!/files/patch_lm_head_quant.py
 !/files/patch_v030_reasoning.py
 !/files/patch_v030_block_fp8_linear.py
 !/files/patch_qwen_tool_parser.sh

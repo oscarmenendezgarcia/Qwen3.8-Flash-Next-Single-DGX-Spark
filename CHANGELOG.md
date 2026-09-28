@@ -10,9 +10,10 @@ as promises.
 - **The reason to move to vLLM 0.30 was capacity, and the pinned lane has since
   taken it back.** The 2026-09-25 comparison gave 0.30 a 65% larger KV pool --
   801,076 tokens against 486,172 -- which was the one number that justified the
-  four patches. Since then fp8 KV, `HOST_RESERVE_GIB=30` and now the fp8 output
-  head put the pinned lane at 782,038 tokens on the same host, inside 3% of
-  0.30's figure and reached without leaving the image this recipe is built and
+  four patches. Since then fp8 KV and `HOST_RESERVE_GIB=30` put the pinned lane
+  between 720,529 and 812,792 tokens on the same host across eight boots -- the
+  pool varies about 6% boot to boot for reasons not identified -- which brackets
+  0.30's figure, and is reached without leaving the image this recipe is built and
   tested against.
 
   What 0.30 still has is prefill: +23% to +33% depending on length, against a
@@ -20,57 +21,76 @@ as promises.
   isolated; fp8 KV was later measured at -4 to -5.5% on its own, which accounts
   for roughly half of it. The second reason to revisit that lane -- that it
   carries later fixes where the output head is quantized -- no longer applies
-  either: the head serves on the pinned image as of today.
+  either: the head was made to serve on the pinned image today, measured at 3-4%
+  and reverted (see below).
 
   Still behind `V030=true`, still not adopted, and now a narrower bet: worth
   revisiting for a prefill-bound workload, not for capacity.
 
-## 2026-09-28 (fp8 output head)
+## 2026-09-28 (fp8 output head: measured, not adopted)
 
-- **The output head serves in fp8, and it is worth 3-4% of decode.** lm_head is
-  248,320 x 2,560: 1.18 GiB of the 5.57 GB a decode step reads on this host,
-  22.8% of the byte budget and the largest single tensor left in bf16. Halved,
-  behind `LM_HEAD_QUANT=1` (default off) with the `-fp8hybrid-head` snapshot:
-
-  Four measurements per prompt type per configuration, first discarded as
-  warm-up, median of the rest -- a single shot read +7.7% on code where the
-  repeats say +3.0%, and one earlier prose baseline in this file (49.6, the K
-  sweep) is an outlier against the 44.5-47.1 the repeats spread over:
+- **The head serves in fp8, gains 3-4% of decode, and that is not enough.** lm_head
+  is 248,320 x 2,560: 1.18 GiB of the 5.57 GB a decode step reads here, 22.8% of
+  the byte budget and the largest tensor left in bf16. Halved it measures, over
+  four runs per cell with the first discarded, medians:
 
   | | bf16 head | fp8 head | |
   |---|---|---|---|
-  | decode, code | 57.25 (56.5-57.9) | **58.95** (58.5-60.4) | +3.0% |
-  | decode, prose | 46.21 (44.5-47.1) | **47.94** (47.8-50.2) | +3.7% |
-  | decode, structured | 62.49 (62.0-62.8) | **65.21** (63.5-65.4) | +4.4% |
-  | decode, json | 52.79 (52.0-53.5) | **54.86** (54.4-56.8) | +3.9% |
+  | decode, code | 57.25 (56.5-57.9) | 58.95 (58.5-60.4) | +3.0% |
+  | decode, prose | 46.21 (44.5-47.1) | 47.94 (47.8-50.2) | +3.7% |
+  | decode, structured | 62.49 (62.0-62.8) | 65.21 (63.5-65.4) | +4.4% |
+  | decode, json | 52.79 (52.0-53.5) | 54.86 (54.4-56.8) | +3.9% |
   | drafter acceptance | 76.6% | 79.9% | +3.3 pt |
   | weights | 74.06 GiB | 73.47 GiB | -0.59 |
-  | KV pool | 811,328 | **845,011** | +33,683 |
+  | KV pool | 811,328 | 845,011 | +33,683 |
 
-  The ranges do not overlap on any of the four, so the gain is real, uniform and
-  small: 3-4%, not the 8% a single shot suggested.
+  No range overlaps, and it does not become a penalty under load (+0.8% to +6.2%
+  at 4 and 8 concurrent requests). Lexical quality stayed inside the bf16 band:
+  22.9 malformations per 10k against 14.4-30.0, sustained drift 0/30. Cost: 5.02 GB
+  of disk for the variant snapshot (only the shard holding the head is rewritten)
+  and 3-4% of decode for 10.6% fewer bytes per step -- a third of the byte saving,
+  the rest being the dense layers and experts that did not change.
 
-  It does not turn into a penalty under load, which was the risk worth checking:
-  the activation scale is computed per token on every call, so the cost grows
-  with the batch while the byte saving matters less. Three measurements per cell,
-  medians, 300 tokens per request:
+  **Reverted the same day, and the deciding argument is upstream's.** NVIDIA lists
+  `lm_head` in BOTH exclusion lists of its own checkpoint (`quantization_config
+  .ignore` and `quantization.exclude_modules`, 292 entries each), and its vLLM
+  implementation builds `ParallelLMHead` **without passing quant_config at all**,
+  so even a checkpoint declaring a quantized head would be ignored. The party
+  holding the calibration data chose bf16 deliberately and made the code unable to
+  do otherwise. Against that, 3-4% buys little, and the 2.18% median weight error
+  the conversion introduces sits below the resolution of the instrument available
+  here: the lexical band is 14.4-30.0 per 10k, wider than the effect worth finding.
+  bilikaz/qwen38-flash-next-recipe does quantize it, to NVFP4, reporting 50 -> 60
+  tok/s -- a before/after across configurations, where a baseline without the
+  reduced draft vocabulary or fp8 dense layers leaves the head a far larger share
+  of the step than it is of ours.
 
-  | | bf16 | fp8 | |
-  |---|---|---|---|
-  | code, 4 concurrent | 34.34 | 34.63 | +0.8% (spreads overlap) |
-  | code, 8 concurrent | 33.50 | 34.73 | +3.7% |
-  | prose, 4 concurrent | 28.21 | 29.66 | +5.1% |
-  | prose, 8 concurrent | 28.23 | 29.97 | +6.2% |
+  The work is kept on the `fp8-head` branch, which carries the converter
+  (`files/fp8_head_convert.py`), the patcher (`files/patch_lm_head_quant.py`) and
+  the `LM_HEAD_QUANT` knob. What it would take to reopen the question is an
+  instrument with resolution: top-1 agreement and distribution divergence between
+  the two heads over a few thousand positions at temperature 0, which measures
+  what that 2.18% does to the probabilities rather than whether prose still looks
+  Spanish.
 
-  Quality holds: 22.9 malformations per 10k over 30 generations, inside the
-  14.4-30.0 band the bf16 head measures, sustained drift 0/30, and every
-  candidate the auditor flagged is a real Spanish word (*rojinegros*, *clúster*,
-  *carritos*, *oralidad*). Acceptance did not degrade, which is the check that
-  mattered: the drafter reads the same head.
+- **ModelOpt's fp8 linear is static on the activation side, and that is the trap.**
+  `ModelOptFp8LinearMethod` initialises `input_scale` to `finfo(float32).min` and
+  overwrites it only from a checkpoint `input_scale`, which a calibrated ModelOpt
+  export carries and a head converted from bf16 does not. The head then quantizes
+  hidden states by -3.4e38: the model serves, generations come back as cross-script
+  gibberish and drafter acceptance falls to 3.3%. The branch answers it with a
+  runtime per-token activation scale (`kFp8DynamicTokenSym`), which needs no
+  calibration data. Worth knowing before quantizing any head from this checkpoint.
 
-  The gain is smaller than the 10.6% of bytes removed, and that is expected --
-  only the head shrinks, while the dense layers and the active experts do not,
-  and the activation scale is now computed per token on every call.
+- **Two traps found on the way, both general.** The drafter's reduced vocabulary
+  slices rows out of `lm_head.weight` and feeds them to a plain
+  `torch.nn.functional.linear`, which has no fp8 kernel (`NotImplementedError:
+  "addmm_cuda" not implemented for 'Float8_e4m3fn'`) -- any quantized head needs
+  that slice dequantized. And an `AttributeError: 'MergedColumnParallelLinear'
+  object has no attribute 'data'` was blamed on the head patch for an afternoon
+  when the cause was passing `EXTRA_DOCKER_ARGS` by environment: it is in
+  start.sh's `_ENV_SNAPSHOT_VARS`, so doing that REPLACES the .env value and
+  silently dropped `VLLM_FP8_HYBRID=1`.
 
 - **The smoke test now checks the model writes in one writing system.** Section 3
   asks 17*23 and greps for 391, which a model serving noise fails -- but a model
@@ -82,29 +102,6 @@ as promises.
   (33.6%), ordinary prose with em dashes and curly quotes scores 0, and a single
   quoted foreign word only warns -- this unit has OnFailure, so its bar sits
   where the failure sat, not where "море" would reach it.
-
-- **ModelOpt's fp8 linear is static on the activation side too, and that is what
-  made the first working head produce noise.** `ModelOptFp8LinearMethod`
-  initialises `input_scale` to `finfo(float32).min` and overwrites it only from a
-  checkpoint `input_scale`, which a calibrated ModelOpt export carries and a head
-  converted from bf16 does not. The head then quantized hidden states by
-  -3.4e38: the model served, generations came back as cross-script gibberish and
-  drafter acceptance fell to 3.3%. No calibration pass was run and none was
-  invented -- `files/patch_lm_head_quant.py` wraps the config so the head gets a
-  runtime per-token activation scale (`kFp8DynamicTokenSym`), which needs no
-  calibration data and is more accurate than one static per-tensor scale.
-
-- **Two further blockers on the way there, both worth recording.** The drafter's
-  reduced vocabulary slices rows out of `lm_head.weight` and feeds them to a
-  plain `torch.nn.functional.linear`, which has no fp8 kernel
-  (`NotImplementedError: "addmm_cuda" not implemented for 'Float8_e4m3fn'`);
-  `files/patch_mtp_draft_vocab.py` now dequantizes that slice to bf16, which is
-  free -- it was already a bf16-sized copy, and a positive per-tensor scale
-  leaves the argmax it feeds untouched. Before that, an
-  `AttributeError: 'MergedColumnParallelLinear' object has no attribute 'data'`
-  was blamed on the head patch for an afternoon; the cause was passing
-  `EXTRA_DOCKER_ARGS` by environment, which start.sh's `_ENV_SNAPSHOT_VARS`
-  makes REPLACE the .env value, silently dropping `VLLM_FP8_HYBRID=1`.
 
 ## 2026-09-26 (K sweep)
 

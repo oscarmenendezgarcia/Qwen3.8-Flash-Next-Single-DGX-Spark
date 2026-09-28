@@ -119,7 +119,7 @@ _ENV_SNAPSHOT_VARS=(KV_TARGET_GIB HOST_RESERVE_GIB HOST_SLACK_GIB OS_RESERVE_GIB
                     YARN_CEILING_MODEL_LEN BIND READY_TIMEOUT_S API_KEY
                     VLLM_QSA_DET_TOPK VLLM_MOE_DET_FINALIZE GDN_DECODE_KERNEL
                     MTP_DISABLE_BLOCK_DROP CHAT_TEMPLATE V030 V030_KV_GIB
-                    TP1_MODEL_ID TP1_SNAPSHOT LOAD_FAST LM_HEAD_QUANT)
+                    TP1_MODEL_ID TP1_SNAPSHOT LOAD_FAST)
 for _v in "${_ENV_SNAPSHOT_VARS[@]}"; do
     eval "_SNAP_$_v=\${$_v-}"
     eval "_SNAPSET_$_v=\${$_v+set}"
@@ -758,26 +758,6 @@ extract "$MTP_PKG" "$PATCHED_MTP.orig"
 python3 "$SCRIPT_DIR/files/patch_mtp_draft_vocab.py"
 [[ -f "$PATCHED_MTP" ]] || err "MTP patch missing after patch_mtp_draft_vocab.py"
 
-# Quantized output head (files/patch_lm_head_quant.py). lm_head.weight is 1.27 GB
-# in bf16, 22.8% of the bytes a decode step reads on this host, and neither the
-# main model nor the drafter passes quant_config when building it -- so a
-# checkpoint whose head is quantized cannot load without this. Needs a snapshot
-# built by files/fp8_head_convert.py; LM_HEAD_QUANT=0 (the default) leaves both
-# heads exactly as upstream builds them.
-# Runs AFTER the MTP patcher on purpose: it edits that patcher's output, which is
-# regenerated from the image on every launch.
-LM_HEAD_QUANT="${LM_HEAD_QUANT:-0}"
-LM_HEAD_MOUNT=""
-if [[ "$LM_HEAD_QUANT" == 1 ]]; then
-    mkdir -p "$SCRIPT_DIR/files/lm_head_quant/orig"
-    extract "$VLLM_PKG/models/qwen3_8_flash_next/nvidia/model.py" \
-        "$SCRIPT_DIR/files/lm_head_quant/orig/model.py"
-    python3 "$SCRIPT_DIR/files/patch_lm_head_quant.py" >/dev/null \
-        || warn "lm_head quant: patcher failed; heads stay bf16"
-    [[ -f "$SCRIPT_DIR/files/lm_head_quant/model.py" ]] \
-        && LM_HEAD_MOUNT=" -v $SCRIPT_DIR/files/lm_head_quant/model.py:$VLLM_PKG/models/qwen3_8_flash_next/nvidia/model.py:ro"
-fi
-
 # Fast weight loading (files/patch_load_fast.sh, blazux patches 14-17). A launch
 # here spent 672 s loading weights, which made every experiment cost eleven
 # minutes; their measurements put the main model at 541 -> 35 s. Default on, and
@@ -1279,7 +1259,6 @@ docker run \\
     $OVERLAY_MOUNTS \\
     $BLOCK_DROP_MOUNTS \\
     $LOADFAST_MOUNTS \\
-    $LM_HEAD_MOUNT \\
     $OFFLOAD_MOUNTS \\
     -v $HF_CACHE_DIR:/root/.cache/huggingface \\
     -v $HOME/.cache/vllm:/root/.cache/vllm \\
