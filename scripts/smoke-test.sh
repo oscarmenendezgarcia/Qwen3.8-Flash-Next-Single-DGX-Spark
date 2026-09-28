@@ -67,6 +67,44 @@ m = json.load(sys.stdin)["choices"][0]["message"]
 print((m.get("reasoning") or "") + "\n" + (m.get("content") or ""))' 2>/dev/null)
 echo "$ANSWER" | grep -q "391" && ok "17*23=391 answered correctly" || bad "answer missing 391: ${ANSWER:0:200}"
 
+# Arithmetic catches a model that has stopped working. It does not catch one that
+# still answers 391 while sprinkling other writing systems through ordinary
+# prose, and that failure is not hypothetical twice over: an fp8 output head
+# whose activation scale was the -3.4e38 sentinel served happily in cross-script
+# gibberish, and the 4-bit PLE table's drift looked the same way round. The
+# lexical auditor measures this properly over 30 generations and 40 minutes; this
+# is the cheap version. Accented Latin, dashes and curly quotes are ordinary
+# Spanish typography, so only the ranges no Spanish paragraph should reach count.
+# Verified both ways: the real gibberish scored 39 of 116 letters, ordinary prose
+# with em dashes and curly quotes scored 0.
+echo "== 3b. one writing system (Spanish prose) =="
+PARA=$(curl -s -m 120 "${AUTH[@]}" -H 'Content-Type: application/json' "$BASE/v1/chat/completions" -d "{
+  \"model\": \"$MODEL\", \"temperature\": 0, \"max_tokens\": 320,
+  \"messages\": [{\"role\":\"user\",\"content\":\"Escribe un parrafo de unas 80 palabras sobre el mar en invierno.\"}]}" \
+  | python3 -c 'import json,sys
+m = json.load(sys.stdin)["choices"][0]["message"]
+print(((m.get("content") or "") + " " + (m.get("reasoning") or "")).strip())' 2>/dev/null)
+read -r FOREIGN TOTAL <<<"$(python3 -c '
+import sys
+text = sys.stdin.read()
+RANGES = ((0x0400,0x052F),(0x0590,0x08FF),(0x0900,0x0DFF),(0x0E00,0x0E7F),
+          (0x1100,0x11FF),(0x3000,0x9FFF),(0xAC00,0xD7AF),(0xF900,0xFAFF))
+letters = [c for c in text if c.isalpha()]
+bad = [c for c in letters if any(lo <= ord(c) <= hi for lo, hi in RANGES)]
+print(len(bad), len(letters))' <<<"$PARA")"
+if [[ -z "$TOTAL" || "$TOTAL" -lt 80 ]]; then
+  bad "Spanish paragraph came back with $TOTAL letters — empty-cell trap"
+elif [[ "$FOREIGN" -gt 8 ]] && (( FOREIGN * 20 > TOTAL )); then
+  bad "$FOREIGN of $TOTAL letters outside Latin — the model is drifting: ${PARA:0:160}"
+elif [[ "$FOREIGN" -gt 0 ]]; then
+  # A quoted foreign word is a legitimate answer; this unit alerts on failure, so
+  # the bar is set where the real degradation sat (33.6% of letters) and not where
+  # "море" would reach it.
+  note "$FOREIGN of $TOTAL letters outside Latin (below the 5% threshold)"
+else
+  ok "Spanish prose in one writing system ($TOTAL letters)"
+fi
+
 echo "== 4. determinism (temp 0, two runs) =="
 # Both runs must emit tokens: an all-empty output cell "passes" a naive
 # comparison while the model is still inside its thinking block.
