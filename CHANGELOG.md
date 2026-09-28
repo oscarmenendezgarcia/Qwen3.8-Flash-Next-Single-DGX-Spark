@@ -52,6 +52,17 @@ as promises.
   only the head shrinks, while the dense layers and the active experts do not,
   and the activation scale is now computed per token on every call.
 
+- **The smoke test now checks the model writes in one writing system.** Section 3
+  asks 17*23 and greps for 391, which a model serving noise fails -- but a model
+  that answers 391 correctly while sprinkling other scripts through prose passes
+  it, and that is the shape both real degradations here have taken: the fp8 head
+  with no activation scale, and the 4-bit PLE table's drift. Section 3b asks for
+  a Spanish paragraph and counts letters in ranges no Spanish paragraph reaches.
+  Calibrated against both directions: the real gibberish scored 39 of 116 letters
+  (33.6%), ordinary prose with em dashes and curly quotes scores 0, and a single
+  quoted foreign word only warns -- this unit has OnFailure, so its bar sits
+  where the failure sat, not where "море" would reach it.
+
 - **ModelOpt's fp8 linear is static on the activation side too, and that is what
   made the first working head produce noise.** `ModelOptFp8LinearMethod`
   initialises `input_scale` to `finfo(float32).min` and overwrites it only from a
