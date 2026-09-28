@@ -57,9 +57,11 @@
 # Wikipedia; +28.6% Spanish decode, English untouched). For deployments
 # serving Spanish traffic; see docs/spanish-drafting-and-performance-*.md.
 !/files/draft_vocab_es_en_code_65k.txt
+!/files/draft_vocab_es_en_code_32k.txt
 # builds the reduced draft vocabulary the MTP patch reads. Its output is a
 # generated artifact and lives in ~/.cache/vllm/draft_vocab/, not here.
 !/files/build_draft_vocab.py
+!/files/build_draft_vocab_union.py
 # extends a shipped vocab with a second language, floor-only + byte-fallback
 # pin (oscarmenendezgarcia). Built the 65k ES file above.
 !/files/build_draft_vocab_extend.py

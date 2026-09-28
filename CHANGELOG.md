@@ -5,6 +5,66 @@ are grouped by date, newest first. Every measurement named here was taken on the
 one DGX Spark this repo is written for — treat them as that host's numbers, not
 as promises.
 
+## 2026-09-28 (draft vocabulary: mis-allocated, not mis-sized)
+
+- **Half the ids, better coverage, and 3-7% of decode.**
+  `files/draft_vocab_es_en_code_32k.txt` (31,892 ids) replaces the 65,536-id file
+  in production. The old one was built floor-first -- the shipped 47k English+code
+  file whole, plus Spanish Wikipedia on top -- so 47,172 of its ids serve a
+  distribution this host does not, and it measures worse for it. Coverage on a
+  held-out 20% of the session corpora, so this is not the corpus it was built on:
+
+  | | ids | held es | held session | held mixed | probes code / en / es |
+  |---|---|---|---|---|---|
+  | 65k, floor-first | 65,536 | 98.62% | 98.22% | 97.79% | 100% / 99.3% / 100% |
+  | **32k, frequency + probes** | **31,892** | **99.53%** | **99.88%** | **99.72%** | 100% / **100%** / 100% |
+
+  Better on all six. The drafter reads its slice once per draft step, so at K=3
+  this is 0.938 -> 0.456 GiB of the 5.57 GB a decode step reads, and the drafter's
+  own head goes 1.18 -> 0.15 GiB. Four measurements per cell, first discarded:
+
+  | | 65k | 32k | |
+  |---|---|---|---|
+  | code | 58.06 | 60.87 | +4.8%, ranges overlap |
+  | prose | 46.27 | 46.29 | flat |
+  | structured | 62.84 | **65.23** | +3.8%, no overlap |
+  | json | 52.09 | **55.68** | +6.9%, no overlap |
+  | acceptance | 75.8% | 77.3% | +1.5 pt |
+
+  Two cells are solid, code is probably real but noisy, and prose is flat --
+  which is the result that fits worst, since prose is where the Spanish coverage
+  gain should show.
+
+- **Frequency alone would have shipped a rollback.** The corpus-only file failed
+  the probe guards at code 96.7% and es 98.7%: the corpora do not exercise tokens
+  the traffic needs, which is exactly how a locally rebuilt vocabulary once
+  degraded output badly enough to force a revert
+  (docs/spanish-drafting-and-performance-2026-09-13.md). Unioning in every id the
+  `check_draft_vocab.py` probes tokenize to cost **22 ids** and took both guards
+  to 100%. `files/build_draft_vocab_union.py` does this and reproduces the shipped
+  file id-for-id from the corpora.
+
+- **Quality battery, since the structural argument alone is not evidence.** With
+  greedy verification the accepted tokens are the target's own, so a worse
+  drafter should cost acceptance and never output -- but that argument was worth
+  testing. Smoke 8/0/1 (the warning is the known QSA non-determinism); lexical
+  audit **16.5 malformations per 10k** against a 14.4-30.0 band and the 20.6-30.0
+  the 65k measures, sustained drift 0/30; and over 12 fixed prompts at
+  temperature 0 both vocabularies gave 0 letters outside Latin, valid JSON,
+  parsing Python, `bash -n`-clean scripts and the same truncation count.
+
+  **One test in that battery was invalid and is recorded so it is not repeated.**
+  Comparing the two vocabularies for token-identical output at temperature 0
+  proves nothing in this image: `VLLM_QSA_DET_TOPK` needs a compiled kernel the
+  pinned image does not carry, so the QSA top-k non-determinism stays live and two
+  runs of the *same* vocabulary differ too. All 12 prompts differed; none of it
+  counts.
+
+- **It is tuned to this host, and that is a limit, not a feature.** The corpora
+  are this deployment's own Spanish and session text. For another language or a
+  very different domain the 65k file is the safer default, and it still ships;
+  `MTP_DRAFT_VOCAB` picks between them.
+
 ## 2026-09-28 (the 0.30 lane's case has narrowed)
 
 - **The reason to move to vLLM 0.30 was capacity, and the pinned lane has since
