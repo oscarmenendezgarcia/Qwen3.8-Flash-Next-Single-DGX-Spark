@@ -5,6 +5,26 @@ are grouped by date, newest first. Every measurement named here was taken on the
 one DGX Spark this repo is written for — treat them as that host's numbers, not
 as promises.
 
+## 2026-09-28 (the 0.30 lane's case has narrowed)
+
+- **The reason to move to vLLM 0.30 was capacity, and the pinned lane has since
+  taken it back.** The 2026-09-25 comparison gave 0.30 a 65% larger KV pool --
+  801,076 tokens against 486,172 -- which was the one number that justified the
+  four patches. Since then fp8 KV, `HOST_RESERVE_GIB=30` and now the fp8 output
+  head put the pinned lane at 782,038 tokens on the same host, inside 3% of
+  0.30's figure and reached without leaving the image this recipe is built and
+  tested against.
+
+  What 0.30 still has is prefill: +23% to +33% depending on length, against a
+  decode loss of 3-9%. Whether that decode loss is 0.30 itself was never
+  isolated; fp8 KV was later measured at -4 to -5.5% on its own, which accounts
+  for roughly half of it. The second reason to revisit that lane -- that it
+  carries later fixes where the output head is quantized -- no longer applies
+  either: the head serves on the pinned image as of today.
+
+  Still behind `V030=true`, still not adopted, and now a narrower bet: worth
+  revisiting for a prefill-bound workload, not for capacity.
+
 ## 2026-09-28 (fp8 output head)
 
 - **The output head serves in fp8, and it is worth 3-4% of decode.** lm_head is
