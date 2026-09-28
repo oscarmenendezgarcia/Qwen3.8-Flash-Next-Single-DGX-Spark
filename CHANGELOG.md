@@ -65,6 +65,50 @@ as promises.
   very different domain the 65k file is the safer default, and it still ships;
   `MTP_DRAFT_VOCAB` picks between them.
 
+## 2026-09-28 (two dead ends, measured)
+
+- **Probabilistic drafting costs the reduced vocabulary, which is the whole
+  price.** vLLM refuses to pair `draft_sample_method='probabilistic'` with
+  `use_local_argmax_reduction`, deliberately -- speculator.py:
+  "use_local_argmax_reduction is not compatible with
+  draft_sample_method='probabilistic'" -- and `get_top_tokens()` is the only path
+  that reads a reduced head. So the choice is not greedy vs probabilistic, it is
+  reduced vocabulary vs probabilistic. Three measurements per cell, medians, K=3,
+  fp8 KV, reserve 30, against the **65,536-id** vocabulary that was production at
+  the time (since replaced, see the draft-vocabulary entry above):
+
+  | | code | prose | acceptance | KV pool |
+  |---|---|---|---|---|
+  | greedy + 65k reduced | **57.25** | **46.21** | 76.6% | **811,328** |
+  | greedy + full 248k | 47.96 | 38.62 | 74.2% | 793,754 |
+  | probabilistic + full 248k | 47.79 | 37.13 | 73.7% | 771,787 |
+
+  At equal vocabulary probabilistic costs almost nothing (-0.4% code, within the
+  spread; -3.9% prose). The difference is the reduced vocabulary, measured on its
+  own here for the first time: **+19% code, +20% prose, 17,574 more tokens of KV
+  pool**. What was not measured is the reason to want probabilistic drafting at
+  all -- it samples proposals from the drafter's distribution instead of taking
+  the argmax, which bears on output diversity above temperature 0, not on
+  throughput. If that is ever wanted, the table says what it costs.
+
+- **`fastsafetensors` cannot load this model on this host, structurally.** It
+  ships in the pinned image, so it was worth measuring against the vendored
+  blazux load patches. It stages each shard through a GPU buffer:
+
+    torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 8.93 GiB.
+    GPU 0 has a total capacity of 121.63 GiB of which 1.57 GiB is free.
+
+  On unified memory the 9 GiB it wants is the same 9 GiB the KV pool is sized to
+  use, so there is no reserve to give it without shrinking the pool by more than
+  faster loading could be worth. `safetensors` with the lazy strategy stays, which
+  the vendored patches already took from 672 s to 171 s by reading with pread into
+  mapped host memory instead.
+
+  Neither of these kept a knob. Both were measured with a temporary local change
+  to start.sh, and start.sh is unchanged by this entry -- a knob whose only use is
+  reproducing a dead end is not worth the line. The implementations are on the
+  `draft-sample` and `load-format` branches if either question is ever reopened.
+
 ## 2026-09-28 (the 0.30 lane's case has narrowed)
 
 - **The reason to move to vLLM 0.30 was capacity, and the pinned lane has since
