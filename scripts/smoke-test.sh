@@ -126,7 +126,13 @@ else
     # top-k kernel is non-deterministic (drops candidates, upstream
     # vllm#51782). Flaky in both directions — a pass does not prove the
     # kernel is deterministic either.
-    note "outputs differ at temperature 0 (QSA top-k + MoE finalize order; VLLM_QSA_DET_TOPK=1 VLLM_MOE_DET_FINALIZE=1 makes them identical, #28)"
+    # Do not read this as "set the two flags and it goes away". start.sh says why:
+  # VLLM_QSA_DET_TOPK needs a compiled kernel .so the pinned image does not
+  # carry, so setting it changes nothing here and the non-determinism stays.
+  # Cost of not saying so: a comparison of two draft vocabularies for
+  # token-identical output, which measured nothing because both sides were
+  # still non-deterministic (2026-09-28).
+  note "outputs differ at temperature 0 (QSA top-k + MoE finalize order, #28). VLLM_MOE_DET_FINALIZE=1 is live; VLLM_QSA_DET_TOPK=1 is plumbing only until the image carries the kernel, so do not expect identical output from it"
 fi
 
 echo "== 5. decode speed (real answer, not ignore_eos) =="
