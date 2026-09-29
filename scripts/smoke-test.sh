@@ -87,13 +87,27 @@ print(((m.get("content") or "") + " " + (m.get("reasoning") or "")).strip())' 2>
 read -r FOREIGN TOTAL <<<"$(python3 -c '
 import sys
 text = sys.stdin.read()
-RANGES = ((0x0400,0x052F),(0x0590,0x08FF),(0x0900,0x0DFF),(0x0E00,0x0E7F),
-          (0x1100,0x11FF),(0x3000,0x9FFF),(0xAC00,0xD7AF),(0xF900,0xFAFF))
+# Greek through CJK Extension B. The first version of this list let 192 letters
+# of Greek pass as "one writing system"; isalpha() already keeps accented Latin
+# out of it, so the ranges only have to cover what Spanish never reaches.
+RANGES = ((0x0370,0x03FF),(0x0400,0x052F),(0x0530,0x058F),(0x0590,0x08FF),
+          (0x0900,0x0DFF),(0x0E00,0x0E7F),(0x10A0,0x10FF),(0x1100,0x11FF),
+          (0x1200,0x137F),(0x13A0,0x13FF),(0x3000,0x9FFF),(0xAC00,0xD7AF),
+          (0xF900,0xFAFF),(0xFF00,0xFFEF),(0x20000,0x2FA1F))
 letters = [c for c in text if c.isalpha()]
 bad = [c for c in letters if any(lo <= ord(c) <= hi for lo, hi in RANGES)]
 print(len(bad), len(letters))' <<<"$PARA")"
-if [[ -z "$TOTAL" || "$TOTAL" -lt 80 ]]; then
-  bad "Spanish paragraph came back with $TOTAL letters — empty-cell trap"
+# Fail only on nothing at all. A brief but correct answer ("El mar en invierno es
+# gris y frio, nadie se bana aqui." = 41 letters) used to FAIL here, and this unit
+# carries OnFailure, so that cost an alert for a right answer. An empty $TOTAL also
+# means the request itself failed (401/429/503, or a body with neither field), so
+# say that instead of blaming an empty cell.
+if [[ -z "$TOTAL" ]]; then
+  bad "no usable answer for the Spanish paragraph (HTTP error, or neither content nor reasoning)"
+elif [[ "$TOTAL" -eq 0 ]]; then
+  bad "Spanish paragraph came back with 0 letters — empty-cell trap"
+elif [[ "$TOTAL" -lt 150 ]]; then
+  note "Spanish paragraph is short ($TOTAL letters); the script check below is weak on so little text"
 elif [[ "$FOREIGN" -gt 8 ]] && (( FOREIGN * 20 > TOTAL )); then
   bad "$FOREIGN of $TOTAL letters outside Latin — the model is drifting: ${PARA:0:160}"
 elif [[ "$FOREIGN" -gt 0 ]]; then

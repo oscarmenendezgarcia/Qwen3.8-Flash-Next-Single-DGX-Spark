@@ -18,6 +18,17 @@
 # It alerts and does not act, like the health probe: recovery stays with
 # whoever owns the server. What it adds over the probe is immediacy -- the probe
 # runs on a timer, this fails the same second the container does.
+#
+# THE CONSTRAINT: this tracks the container, and it only learns about deliberate
+# stops that go through systemd. `./stop.sh` followed by `./start.sh` -- the path
+# README documents, and the one scripts/supervise.sh and
+# scripts/maintenance-relaunch.sh take -- leaves this unit `failed` with a healthy
+# server behind it, which is the same lie with the sign flipped. Restart= cannot
+# fix that (a real death would then loop), so the operator clears it with
+# `systemctl start flashnext-vllm-alive`, or restarts through
+# `systemctl restart flashnext-vllm` instead. There is deliberately no [Install]
+# section: enabling this on its own would start it at boot with no container to
+# wait for, and alert every boot.
 
 [Unit]
 Description=Flash-Next container liveness (state only, no recovery)
@@ -35,6 +46,3 @@ ExecStart=@RECIPE_DIR@/scripts/wait-container.sh
 # Never restart: a dead container is a fact to report, not to paper over, and
 # relaunching here would fight both the watchdog that stopped it and stop.sh.
 Restart=no
-
-[Install]
-WantedBy=multi-user.target
