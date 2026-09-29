@@ -63,6 +63,7 @@
 # generated artifact and lives in ~/.cache/vllm/draft_vocab/, not here.
 !/files/build_draft_vocab.py
 !/files/build_draft_vocab_union.py
+!/files/check_draft_vocab.py
 # extends a shipped vocab with a second language, floor-only + byte-fallback
 # pin (oscarmenendezgarcia). Built the 65k ES file above.
 !/files/build_draft_vocab_extend.py

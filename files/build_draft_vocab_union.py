@@ -67,15 +67,28 @@ def main() -> None:
     args = ap.parse_args()
 
     here = os.path.dirname(os.path.abspath(__file__))
+    # Before the corpus pass, not after: probe_ids() imports this file, and
+    # spec_from_file_location does not stat it, so a missing one used to surface as
+    # a bare FileNotFoundError after minutes of tokenizing, with no --out written.
+    checker = os.path.join(here, "check_draft_vocab.py")
+    if not os.path.exists(checker):
+        sys.exit(f"missing {checker}: the per-language probes live there, and the "
+                 f"union needs them (frequency alone fails the code and es guards)")
     with tempfile.NamedTemporaryFile("r", suffix=".txt", delete=False) as tmp:
         stage = tmp.name
-    subprocess.run(
-        [sys.executable, os.path.join(here, "build_draft_vocab.py"), *args.corpus,
-         "--model", args.model, "--out", stage, "--size", str(args.size)],
-        check=True,
-    )
-    base = {int(line) for line in open(stage) if line.strip()}
-    os.unlink(stage)
+    try:
+        subprocess.run(
+            [sys.executable, os.path.join(here, "build_draft_vocab.py"), *args.corpus,
+             "--model", args.model, "--out", stage, "--size", str(args.size)],
+            check=True,
+        )
+        base = {int(line) for line in open(stage) if line.strip()}
+    finally:
+        if os.path.exists(stage):
+            os.unlink(stage)
+    if not base:
+        sys.exit("build_draft_vocab.py wrote no ids; refusing to ship a vocabulary "
+                 "that is only the probe floor")
 
     from transformers import AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)

@@ -19,4 +19,6 @@ WorkingDirectory=@RECIPE_DIR@
 # the server being down: that is the health probe's job to report, not this one's.
 ExecCondition=/usr/bin/env bash -c 'curl -s -m 10 http://127.0.0.1:${PORT:-8890}/metrics | grep -qE "^vllm:num_requests_running\\{[^}]*\\} 0(\\.0)?$"'
 ExecStart=@RECIPE_DIR@/scripts/smoke-test.sh
-TimeoutStartSec=900
+# The curl timeouts inside smoke-test.sh now sum to 1095 s (section 3b added 120),
+# so 900 could kill a slow-but-alive server and alert for the wrong reason.
+TimeoutStartSec=1320
