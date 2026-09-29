@@ -5,6 +5,39 @@ are grouped by date, newest first. Every measurement named here was taken on the
 one DGX Spark this repo is written for — treat them as that host's numbers, not
 as promises.
 
+## 2026-09-29 (the kernel VM tunables are not adoptable here, measured)
+
+- **`files/sysctl-spark3.conf` applied cleanly and took the server down in 90
+  seconds.** Not through the driver: `NV_ERR_NO_MEMORY` stayed at 0, so the
+  free-page reserve did its job. Two things calibrated against the old accounting
+  broke at once. `MemAvailable` fell from 17.83 GiB to **521 MiB** with 5,687 MiB
+  actually free -- with `min_free_kbytes=4 GiB` and `watermark_scale_factor=300`
+  the low/high watermarks become ~7.7/~11.3 GiB, and MemAvailable counts free
+  memory only above the high one, which a serving host never reaches -- so the
+  watchdog's MemAvailable floor fired on a healthy box. And `start.sh:611` refuses
+  to launch unless `MemAvailable >= container + 4 GiB`: at idle the figure went
+  from ~118 to 96 GiB, exactly what the container asks for, so the launcher
+  blocked itself.
+
+  Reverted with `sysctl -w vm.min_free_kbytes=45155 vm.watermark_scale_factor=10`;
+  ~20 minutes of downtime. Adopting it would mean re-deriving both the watchdog
+  floor and the launcher's guard for the new accounting -- a change to this kit,
+  not a kernel tweak. The file's own warning ("re-derive it from a measured idle
+  run before relying on both together") was the central one, not a footnote.
+
+- **Prose decode, superseded.** This file reports prose for the pinned lane at
+  49.6 (K sweep), 46.7 and 48.6 (load-fast) and 46.2 (2026-09-28, twice). Code
+  agrees across the same rows; prose does not. The 2026-09-28 figures stand: four
+  measurements per cell, first discarded, each paired with a candidate measured
+  beside it. Treat a prose difference under ~7% as instrument spread unless both
+  sides were measured in one session, the way the KV pool's +-6% is treated.
+
+- **The 0.30 lane's two decode costs are not in conflict.** The -25..-32% on prose
+  is upstream's own 0.30 lane, with the dense layers in BF16. The 3-9% is this
+  recipe's fp8 hybrid on 0.30, and the gap between them is the hybrid working:
+  36.8 tok/s on their lane against 42.6 on ours. Different configurations, both
+  measurements stand.
+
 ## 2026-09-29 (audited, and three of the findings were bugs)
 
 - **Three read-only audits over the last eleven commits found one dead feature, one
