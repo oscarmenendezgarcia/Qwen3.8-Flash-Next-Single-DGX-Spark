@@ -15,18 +15,25 @@ RECIPE_DIR="$(dirname "$HERE")"
 RUN_USER="$(stat -c %U "$RECIPE_DIR")"
 HOME_DIR="$(getent passwd "$RUN_USER" | cut -d: -f6)"
 DST=/etc/systemd/system/flashnext-vllm.service
+# The launcher's own state cannot track the container (see the unit's header), so
+# a second unit does, and both are installed together or the truthful one is
+# missing exactly when it matters.
+DST_ALIVE=/etc/systemd/system/flashnext-vllm-alive.service
 
 [[ -x "$RECIPE_DIR/start.sh" ]] || { echo "no start.sh in $RECIPE_DIR"; exit 1; }
 echo "  recipe : $RECIPE_DIR"
 echo "  user   : $RUN_USER  (home $HOME_DIR)"
 
-sed -e "s|@RECIPE_DIR@|$RECIPE_DIR|g" \
-    -e "s|@HOME_DIR@|$HOME_DIR|g" \
-    -e "s|@RUN_USER@|$RUN_USER|g" \
-    "$HERE/flashnext-vllm.service" > "$DST"
-chmod 0644 "$DST"
-grep -q "@" "$DST" && { echo "placeholders left unfilled in $DST"; exit 1; }
-echo "[ OK ] written -> $DST"
+for pair in "flashnext-vllm.service:$DST" "flashnext-vllm-alive.service:$DST_ALIVE"; do
+    src="${pair%%:*}"; dst="${pair##*:}"
+    sed -e "s|@RECIPE_DIR@|$RECIPE_DIR|g" \
+        -e "s|@HOME_DIR@|$HOME_DIR|g" \
+        -e "s|@RUN_USER@|$RUN_USER|g" \
+        "$HERE/$src" > "$dst"
+    chmod 0644 "$dst"
+    grep -q "@" "$dst" && { echo "placeholders left unfilled in $dst"; exit 1; }
+    echo "[ OK ] written -> $dst"
+done
 
 systemctl daemon-reload && echo "[ OK ] daemon-reload"
 systemctl enable flashnext-vllm.service && echo "[ OK ] enabled"
@@ -34,9 +41,16 @@ systemctl enable flashnext-vllm.service && echo "[ OK ] enabled"
 # start.sh returns early when the container is already up, so this syncs
 # systemd's view rather than restarting a live server.
 systemctl start flashnext-vllm.service && echo "[ OK ] started"
+# Started after the launcher, never enabled on its own: PartOf ties its lifetime
+# to the launcher's, and starting it alone would only wait on a container that
+# nothing had been asked to create.
+systemctl start flashnext-vllm-alive.service && echo "[ OK ] liveness tracker started"
 
 echo
-systemctl is-active  flashnext-vllm.service | sed 's/^/  active:  /'
+# The launcher's "active" only means it ran; the tracker's means the container is
+# up. Both are printed so the difference is visible from the first install.
+systemctl is-active  flashnext-vllm.service       | sed 's/^/  launcher ran:    /'
+systemctl is-active  flashnext-vllm-alive.service | sed 's/^/  container alive: /'
 systemctl is-enabled flashnext-vllm.service | sed 's/^/  enabled: /'
 PORT="$(grep -oP '^PORT=\K[0-9]+' "$RECIPE_DIR/.env" 2>/dev/null || echo 8888)"
 printf '  health:  %s (port %s)\n' "$(curl -s -m 15 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/health")" "$PORT"

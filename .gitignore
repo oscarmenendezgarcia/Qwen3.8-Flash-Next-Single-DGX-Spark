@@ -36,6 +36,7 @@
 !/scripts/start-memwatch.sh
 !/scripts/supervise.sh
 !/scripts/health-probe.sh
+!/scripts/wait-container.sh
 !/scripts/maintenance-relaunch.sh
 !/scripts/alert.sh
 !/scripts/memwatch-rotate.sh

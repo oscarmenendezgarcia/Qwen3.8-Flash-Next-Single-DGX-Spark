@@ -5,6 +5,38 @@ are grouped by date, newest first. Every measurement named here was taken on the
 one DGX Spark this repo is written for — treat them as that host's numbers, not
 as promises.
 
+## 2026-09-29 (the unit stopped lying about the server)
+
+- **`systemctl is-active flashnext-vllm` answered "active" with nothing serving.**
+  The launcher is `Type=oneshot` with `RemainAfterExit=yes`, deliberately: that is
+  what makes `systemctl start` block until /health answers and `systemctl stop`
+  run stop.sh. The cost is that its state freezes when ExecStart returns and never
+  tracks the container again. It surfaced for real on 2026-09-28: the watchdog
+  stopped the container at MemFree 1.2 GiB (NV_ERR_NO_MEMORY had already been
+  logged once) and the unit went on reporting "active" for four minutes with the
+  server down. There is no `Restart=`, so nothing brought it back either.
+
+  `deploy/flashnext-vllm-alive.service` is now the unit whose state IS the
+  container's liveness: `scripts/wait-container.sh` blocks in `docker wait`, so it
+  is active exactly while the container runs and fails the second it dies. It is
+  `After=` and `PartOf=` the launcher, so it starts once the container exists and a
+  deliberate stop or restart takes it along rather than looking like a death --
+  systemd signals the script instead of letting `docker wait` return, which is
+  what separates the two cases. `Restart=no`, on purpose: relaunching there would
+  fight both the watchdog that stopped the container and stop.sh.
+
+  It alerts and does not act, like the health probe, and `OnFailure=` reaches the
+  same alert template. What it adds over the probe is immediacy: the probe runs on
+  a timer, this fails in the same second.
+
+  The launcher keeps its semantics untouched; only its header now says plainly
+  what its "active" means, and `Wants=` starts the tracker with it.
+  `deploy/install-unit.sh` installs both and prints both states, so the
+  distinction is visible from the first install:
+
+      launcher ran:    active
+      container alive: active
+
 ## 2026-09-28 (draft vocabulary: mis-allocated, not mis-sized)
 
 - **Half the ids, better coverage, and 3-7% of decode.**

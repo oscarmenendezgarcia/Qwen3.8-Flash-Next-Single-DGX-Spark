@@ -11,6 +11,16 @@
 # by the Docker daemon, not by systemd. start.sh is idempotent (it returns early
 # if the container is already running) and blocks until /health answers, so no
 # ExecStartPost readiness probe is needed.
+#
+# WHAT THIS UNIT'S STATE MEANS, AND DOES NOT. "active" here means ExecStart ran
+# and returned successfully -- the server was healthy at that moment. It does NOT
+# track the container afterwards, and cannot: RemainAfterExit freezes the state.
+# On 2026-09-28 the watchdog stopped the container at MemFree 1.2 GiB and this
+# unit went on answering "active" with nothing serving.
+#
+# flashnext-vllm-alive.service is the unit whose state IS the container's
+# liveness (it blocks in `docker wait`). Wants= below starts it with this one;
+# check THAT one, or /health, to ask whether the server is up.
 
 [Unit]
 Description=Qwen3.8-Flash-Next-NVFP4 (vLLM, GB10)
@@ -18,6 +28,9 @@ Documentation=file://@RECIPE_DIR@/README.md
 After=docker.service network-online.target
 Requires=docker.service
 Wants=network-online.target
+# Ordered After= this unit and PartOf= it, so it starts once the container exists
+# and a deliberate stop or restart takes it along instead of looking like a death.
+Wants=flashnext-vllm-alive.service
 
 # The GB10 has UNIFIED memory: GPU and host page cache come out of the same
 # 121.63 GiB. This model's GPU budget is MemTotal - HOST_RESERVE_GIB (26) =

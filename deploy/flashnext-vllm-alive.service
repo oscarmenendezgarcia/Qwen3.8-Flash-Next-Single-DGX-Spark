@@ -1,0 +1,40 @@
+# /etc/systemd/system/flashnext-vllm-alive.service
+#
+# Makes `systemctl is-active` tell the truth about the Flash-Next server.
+#
+# flashnext-vllm.service is a launcher: oneshot + RemainAfterExit, so that
+# `systemctl start` blocks until /health answers and `systemctl stop` runs
+# stop.sh. Both are worth keeping, and both mean its state stops tracking
+# reality the moment ExecStart returns. On 2026-09-28 the watchdog stopped the
+# container at MemFree 1.2 GiB and `systemctl is-active flashnext-vllm` went on
+# answering "active" with nothing serving.
+#
+# This unit's ExecStart blocks in `docker wait`, so its own state IS the
+# container's liveness: active while it runs, failed the moment it dies. It
+# starts after the launcher (so the container exists) and is PartOf it (so a
+# deliberate stop or restart takes it along, and that path is NOT a failure --
+# systemd signals the script instead of letting docker wait return).
+#
+# It alerts and does not act, like the health probe: recovery stays with
+# whoever owns the server. What it adds over the probe is immediacy -- the probe
+# runs on a timer, this fails the same second the container does.
+
+[Unit]
+Description=Flash-Next container liveness (state only, no recovery)
+Documentation=file://@RECIPE_DIR@/README.md
+After=flashnext-vllm.service
+PartOf=flashnext-vllm.service
+OnFailure=flashnext-alert@%n.service
+
+[Service]
+Type=simple
+User=@RUN_USER@
+WorkingDirectory=@RECIPE_DIR@
+Environment=HOME=@HOME_DIR@
+ExecStart=@RECIPE_DIR@/scripts/wait-container.sh
+# Never restart: a dead container is a fact to report, not to paper over, and
+# relaunching here would fight both the watchdog that stopped it and stop.sh.
+Restart=no
+
+[Install]
+WantedBy=multi-user.target
