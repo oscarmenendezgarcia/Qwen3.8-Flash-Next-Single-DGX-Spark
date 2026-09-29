@@ -5,6 +5,73 @@ are grouped by date, newest first. Every measurement named here was taken on the
 one DGX Spark this repo is written for — treat them as that host's numbers, not
 as promises.
 
+## 2026-09-29 (audited, and three of the findings were bugs)
+
+- **Three read-only audits over the last eleven commits found one dead feature, one
+  dead alert path and one false alarm.** All three were mine, from the day before,
+  and none would have shown up in use until the moment it mattered.
+
+  `deploy/install-unit.sh` could never have completed. Its placeholder check was
+  `grep -q "@"`, and the new alive unit legitimately contains systemd's own template
+  syntax in `OnFailure=flashnext-alert@%n.service`, so the installer aborted on the
+  second unit -- *after* overwriting the live launcher on disk -- and reported
+  "placeholders left unfilled", a diagnosis for a bug that did not exist. The check
+  now matches `@[A-Z_]+@`. This explains the host state the audit found: only the
+  Sep 14 launcher in `/etc/systemd/system/`, no alive unit, ever.
+
+  The alert path went nowhere. `flashnext-alert@.service` is installed only into the
+  user manager (`install-probes.sh`), and system and user scopes share no unit
+  namespace, so a system unit's `OnFailure=` resolved to nothing: the one unit whose
+  whole job is to alert would have failed in silence. `install-unit.sh` now derives a
+  system copy from the same file, adding the `User=` and `HOME=` a system unit needs
+  and a user unit must not have. `systemd-analyze verify` does not catch this -- it
+  does not resolve `OnFailure=` targets -- which is worth knowing before trusting it.
+
+  The smoke test's new writing-system check failed a correct answer. A brief reply
+  ("El mar en invierno es gris y frio, nadie se bana aqui.", 41 letters) tripped the
+  80-letter empty-cell guard, and that unit carries `OnFailure=`, so a right answer
+  cost an alert. It now fails only on nothing at all, names an HTTP failure as one
+  rather than blaming an empty cell, and warns under 150 letters. Its script ranges
+  also let 192 letters of Greek pass as "one writing system"; Greek, Armenian,
+  Georgian, Ethiopic, Cherokee, fullwidth forms and CJK Ext-B are now covered.
+
+- **The tracker has a constraint that was not written down.** It only learns about
+  stops that go through systemd. `./stop.sh` followed by `./start.sh` -- the path
+  README documents, and the one `supervise.sh` and `maintenance-relaunch.sh` take --
+  leaves the unit `failed` with a healthy server behind it: the same lie, sign
+  flipped. `Restart=` cannot fix it (a real death would loop), so the unit header now
+  says so and names the two ways out. Its `[Install]` section is gone, because
+  enabling it alone would wait at boot for a container nothing had been asked to
+  create, and alert every boot.
+
+- **Coherence fixes the audits turned up, none of them behavioural.**
+  `.env.gb10.sample` still selected the 65k draft vocabulary while calling itself the
+  profile this Spark serves, so a clone of the tracked "live" profile silently
+  reverted the 2026-09-28 change; README still documented the 65k as the Spanish
+  default and never mentioned the 32k file, and its KV-pool table for the NVIDIA
+  checkpoint still carried pre-fp8-KV figures (413,051 tokens at reserve 30 against
+  the 720,529-812,792 measured since). README also promised bit-identical greedy
+  decoding from two flags when only one of them does anything on the pinned image --
+  the belief that cost an invalid experiment on 2026-09-28. The launcher unit's header
+  said "NOT ENABLED" while enabled, and named a host reserve of 26 that has been 30
+  since 2026-09-26.
+
+- **Corrections to this file, from the documentation audit.** The lexical band was
+  quoted three times as 14.4-30.0 per 10k; the lowest figure actually recorded here
+  is 16.3, and the 14.4 is not in this file, README or docs, so the band is now stated
+  as recorded. "fp8 KV was later measured at -4 to -5.5% on its own" was likewise
+  unsourced and the conclusion built on it ("accounts for roughly half" of the 0.30
+  lane's decode loss) is withdrawn: no measurement here separates the two. The 0.30
+  entry's second premise contradicted the fp8-head entry twenty lines below it -- if
+  the model implementation passes no `quant_config` to `ParallelLMHead`, the 0.30 lane
+  does not quantize the head either -- and is dropped. The draft-vocabulary entry's
+  acceptance gain now says which baseline it is measured against (75.8% paired in the
+  same run, not the 76.6% three other entries record), its decode table publishes the
+  ranges its overlap claims rest on, "better on all six" is four better and two tied,
+  "so 47,172 of its ids serve a distribution this host does not" is marked as the
+  inference it is, and a byte figure that mixed GiB with GB (10.6%) is corrected to
+  11.4%.
+
 ## 2026-09-29 (the unit stopped lying about the server)
 
 - **`systemctl is-active flashnext-vllm` answered "active" with nothing serving.**
@@ -39,11 +106,13 @@ as promises.
 
 ## 2026-09-28 (draft vocabulary: mis-allocated, not mis-sized)
 
-- **Half the ids, better coverage, and 3-7% of decode.**
+- **Half the ids, better coverage, and 4-7% on two of four prompt types.**
   `files/draft_vocab_es_en_code_32k.txt` (31,892 ids) replaces the 65,536-id file
   in production. The old one was built floor-first -- the shipped 47k English+code
-  file whole, plus Spanish Wikipedia on top -- so 47,172 of its ids serve a
-  distribution this host does not, and it measures worse for it. Coverage on a
+  file whole, plus Spanish Wikipedia on top -- so 47,172 of its ids are spent on the
+  distribution that file was built for -- this host's code and docs, where README
+  records 99.58% held-out coverage -- rather than on the Spanish this host also
+  serves. That reading is an inference; what was measured is the coverage below. Coverage on a
   held-out 20% of the session corpora, so this is not the corpus it was built on:
 
   | | ids | held es | held session | held mixed | probes code / en / es |
@@ -51,17 +120,25 @@ as promises.
   | 65k, floor-first | 65,536 | 98.62% | 98.22% | 97.79% | 100% / 99.3% / 100% |
   | **32k, frequency + probes** | **31,892** | **99.53%** | **99.88%** | **99.72%** | 100% / **100%** / 100% |
 
-  Better on all six. The drafter reads its slice once per draft step, so at K=3
+  Better on four of the six and tied at 100% on the other two (the code and
+  Spanish probes, which both files already pass). The drafter reads its slice once per draft step, so at K=3
   this is 0.938 -> 0.456 GiB of the 5.57 GB a decode step reads, and the drafter's
   own head goes 1.18 -> 0.15 GiB. Four measurements per cell, first discarded:
 
   | | 65k | 32k | |
   |---|---|---|---|
-  | code | 58.06 | 60.87 | +4.8%, ranges overlap |
-  | prose | 46.27 | 46.29 | flat |
-  | structured | 62.84 | **65.23** | +3.8%, no overlap |
-  | json | 52.09 | **55.68** | +6.9%, no overlap |
+  | code | 58.06 (54.8-60.6) | 60.87 (56.1-61.8) | +4.8%, ranges overlap |
+  | prose | 46.27 (43.6-46.5) | 46.29 (43.6-48.1) | flat |
+  | structured | 62.84 (62.4-62.9) | **65.23** (64.1-65.4) | +3.8%, no overlap |
+  | json | 52.09 (51.7-53.4) | **55.68** (54.3-57.0) | +6.9%, no overlap |
   | acceptance | 75.8% | 77.3% | +1.5 pt |
+
+  Both columns were measured in the same session, paired, which is why the 65k
+  baseline here is not the 76.6% three other entries record for the same
+  configuration: against that figure the acceptance gain is +0.7 pt, and the decode
+  baselines differ by up to 1.5% as well. Pairing is deliberate -- each candidate is
+  compared with a baseline measured beside it -- but the two baselines are not
+  interchangeable, and neither supersedes the other.
 
   Two cells are solid, code is probably real but noisy, and prose is flat --
   which is the result that fits worst, since prose is where the Spanish coverage
@@ -80,7 +157,7 @@ as promises.
   greedy verification the accepted tokens are the target's own, so a worse
   drafter should cost acceptance and never output -- but that argument was worth
   testing. Smoke 8/0/1 (the warning is the known QSA non-determinism); lexical
-  audit **16.5 malformations per 10k** against a 14.4-30.0 band and the 20.6-30.0
+  audit **16.5 malformations per 10k** against the 16.3-30.0 band this file records
   the 65k measures, sustained drift 0/30; and over 12 fixed prompts at
   temperature 0 both vocabularies gave 0 letters outside Latin, valid JSON,
   parsing Python, `bash -n`-clean scripts and the same truncation count.
@@ -148,17 +225,18 @@ as promises.
   801,076 tokens against 486,172 -- which was the one number that justified the
   four patches. Since then fp8 KV and `HOST_RESERVE_GIB=30` put the pinned lane
   between 720,529 and 812,792 tokens on the same host across eight boots -- the
-  pool varies about 6% boot to boot for reasons not identified -- which brackets
+  pool varies by about +-6% about its mean from boot to boot, for reasons not
+  identified -- which brackets
   0.30's figure, and is reached without leaving the image this recipe is built and
   tested against.
 
   What 0.30 still has is prefill: +23% to +33% depending on length, against a
   decode loss of 3-9%. Whether that decode loss is 0.30 itself was never
-  isolated; fp8 KV was later measured at -4 to -5.5% on its own, which accounts
-  for roughly half of it. The second reason to revisit that lane -- that it
-  carries later fixes where the output head is quantized -- no longer applies
-  either: the head was made to serve on the pinned image today, measured at 3-4%
-  and reverted (see below).
+  isolated, and no measurement in this file separates the two, so the split
+  between 0.30 itself and the fp8 KV cache is unknown. A second reason to revisit that lane was that it carries later fixes around
+  quantizing the output head. That premise does not survive today's work: the model
+  implementation passes no quant_config to ParallelLMHead at all (see below), so
+  0.30 does not quantize the head either, and there was no such fix to carry.
 
   Still behind `V030=true`, still not adopted, and now a narrower bet: worth
   revisiting for a prefill-bound workload, not for capacity.
@@ -180,11 +258,16 @@ as promises.
   | weights | 74.06 GiB | 73.47 GiB | -0.59 |
   | KV pool | 811,328 | 845,011 | +33,683 |
 
+  That 845,011 sits above the 812,792 top of the band the entry above records for
+  this host, and legitimately: it is the fp8-head configuration, which no longer
+  exists.
+
   No range overlaps, and it does not become a penalty under load (+0.8% to +6.2%
   at 4 and 8 concurrent requests). Lexical quality stayed inside the bf16 band:
-  22.9 malformations per 10k against 14.4-30.0, sustained drift 0/30. Cost: 5.02 GB
+  22.9 malformations per 10k against the recorded 16.3-30.0, sustained drift 0/30. Cost: 5.02 GB
   of disk for the variant snapshot (only the shard holding the head is rewritten)
-  and 3-4% of decode for 10.6% fewer bytes per step -- a third of the byte saving,
+  and 3-4% of decode for 11.4% fewer bytes per step (0.63 GB of 5.57, half of the
+  head's own 22.8%) -- a third of the byte saving,
   the rest being the dense layers and experts that did not change.
 
   **Reverted the same day, and the deciding argument is upstream's.** NVIDIA lists
@@ -195,7 +278,8 @@ as promises.
   holding the calibration data chose bf16 deliberately and made the code unable to
   do otherwise. Against that, 3-4% buys little, and the 2.18% median weight error
   the conversion introduces sits below the resolution of the instrument available
-  here: the lexical band is 14.4-30.0 per 10k, wider than the effect worth finding.
+  here: the lexical band this file records is 16.3-30.0 per 10k, wider than the
+  effect worth finding.
   bilikaz/qwen38-flash-next-recipe does quantize it, to NVFP4, reporting 50 -> 60
   tok/s -- a before/after across configurations, where a baseline without the
   reduced draft vocabulary or fp8 dense layers leaves the head a far larger share

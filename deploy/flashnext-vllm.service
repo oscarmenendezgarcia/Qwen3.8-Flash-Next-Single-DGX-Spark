@@ -2,10 +2,11 @@
 #
 # Qwen3.8-Flash-Next-NVFP4 (vLLM on one GB10). The port comes from .env.
 #
-# NOT ENABLED. This unit exists so the evaluation can be driven the same way as
-# everything else on this box, but Flash-Next cannot share the GPU with the two
-# models currently served (see Conflicts= below), so enabling it is a decision
-# about what this machine serves, not a deployment detail.
+# Enabling this is a decision about what the machine serves, not a deployment
+# detail: Flash-Next takes the whole GPU (see Conflicts= below). On the host these
+# notes are written from it IS enabled and installed, and no other model service is
+# active -- an earlier revision of this header said "NOT ENABLED", which stopped
+# being true and is the kind of claim a reader checks against systemctl.
 #
 # oneshot + RemainAfterExit (not Type=simple) because the process is kept alive
 # by the Docker daemon, not by systemd. start.sh is idempotent (it returns early
@@ -33,8 +34,9 @@ Wants=network-online.target
 Wants=flashnext-vllm-alive.service
 
 # The GB10 has UNIFIED memory: GPU and host page cache come out of the same
-# 121.63 GiB. This model's GPU budget is MemTotal - HOST_RESERVE_GIB (26) =
-# ~94.9 GiB, and its own reserve breakdown budgets "co-tenants ~7". What runs
+# 121.63 GiB. This model's GPU budget is MemTotal - HOST_RESERVE_GIB, and that
+# reserve has been 30 since 2026-09-26 (budget ~91.6 GiB), not the 26 an earlier
+# revision of this comment named. What runs
 # which Flash-Next coexists with either. Conflicts= makes systemd stop them
 # before starting this instead of trusting nobody makes a mistake.
 #

@@ -43,8 +43,8 @@ port can reach the model, so serve with a key or set `BIND=127.0.0.1` in
 `KV_TARGET_GIB=20`, `KV_CACHE_DTYPE=fp8`, `MAMBA_SSM_CACHE_DTYPE=bfloat16`,
 `MAX_NUM_SEQS=4`, `MAX_NUM_BATCHED_TOKENS=2048`**, with the V2 model runner
 pinned through `EXTRA_DOCKER_ARGS`. For Spanish traffic, also swap the draft
-vocabulary: `MTP_DRAFT_VOCAB=files/draft_vocab_es_en_code_65k.txt`
-(see [Serving Spanish](#serving-spanish-65k-draft-vocab)).
+vocabulary: `MTP_DRAFT_VOCAB=files/draft_vocab_es_en_code_32k.txt`
+(see [Serving Spanish](#serving-spanish-the-reduced-draft-vocabulary)).
 Everything below was measured on this host on 2026-09-04; each row names the
 configuration it came from, because the numbers move a lot between them.
 Decode numbers are not in this table: they predate the 2026-09-05 optimisation
@@ -328,7 +328,26 @@ are superseded in both directions: acceptance is much higher, and ordinary
 prose now measures 48.7 tok/s single-stream.
 
 
-### Serving Spanish: 65k draft vocab
+### Serving Spanish: the reduced draft vocabulary
+
+Two files ship, and the smaller one is what this host serves since 2026-09-28.
+`files/draft_vocab_es_en_code_32k.txt` holds 31,892 ids chosen by frequency over
+this deployment's own Spanish and session corpora, unioned with the byte-fallback
+floor and with every id the per-language probes in `files/check_draft_vocab.py`
+tokenize to — that union cost 22 ids and is what takes the code and Spanish probes
+from 96.7%/98.7% to 100%. On a held-out 20% of those corpora it beats the 65k file
+on all six measures at half the ids: 99.53% vs 98.62% of Spanish occurrences,
+99.72% vs 97.79% of mixed, 100% vs 99.3% of the English probe words. The drafter
+then reads 0.456 GiB per decode step at K=3 instead of 0.938. Decode moved +3.8%
+structured and +6.9% json with non-overlapping ranges, code +4.8% within the
+spread and prose flat; acceptance 75.8% → 77.3% measured in the same run.
+`files/build_draft_vocab_union.py` rebuilds it id-for-id from the corpora.
+
+It is tuned to this host's traffic. For another language or a very different
+domain the 65k file below is the safer default, and `MTP_DRAFT_VOCAB` picks
+between them.
+
+The 65k file, for the record:
 
 `MTP_DRAFT_VOCAB=files/draft_vocab_es_en_code_65k.txt` extends the shipped
 47k English+code draft vocabulary to **65,536 rows** — the 47k file whole as
@@ -570,6 +589,11 @@ off (`MTP_NUM_SPECULATIVE_TOKENS=0`), also set `MTP_WEIGHTS_GIB=2.34`.
 | disk (checkpoint + packed PLE table) | ~99 + 27 GiB | ~124 + 48 GiB |
 | `HOST_RESERVE_GIB` it needs | 26 (the default) | 28-30 |
 | KV pool at that reserve | ~975K tokens | ~545K-570K tokens |
+
+Those KV figures predate the bf16 → fp8 KV cache change of 2026-09-26. With
+`KV_CACHE_DTYPE=fp8` the same NVIDIA checkpoint at `HOST_RESERVE_GIB=30` serves
+720,529–812,792 tokens across eight boots (about ±6% boot to boot, for reasons not
+identified), i.e. 3.08x concurrency at a 262k context rather than 1.58x.
 
 At `HOST_RESERVE_GIB=26` the NVIDIA checkpoint peaked at 101.1 GiB of driver
 memory against a 95.65 GiB budget during graph capture, with 12
@@ -1160,9 +1184,19 @@ set (the shipped default), set `API_KEY` in the shell first or the call 401s;
 - `stop.sh` — stops the watchdog, then the container (gracefully by default);
   reports leftover `/dev/shm` segments without deleting them.
 - `scripts/smoke-test.sh` — per-launch verification: health, model metadata,
-  coherent generation, temperature-0 determinism (WARN-only), decode speed
+  coherent generation, one writing system in Spanish prose (it catches drift that
+  still answers the arithmetic correctly), temperature-0 determinism (WARN-only),
+  decode speed
   (≥15 tok/s), a tool-call round-trip (settles `qwen3_coder` vs `qwen3_xml`),
   and `/metrics`.
+- `scripts/wait-container.sh` — blocks in `docker wait` so
+  `deploy/flashnext-vllm-alive.service` can have the container's liveness as its
+  own state; the launcher unit's `active` only means it once started successfully.
+- `deploy/flashnext-vllm.service`, `deploy/flashnext-vllm-alive.service` and
+  `deploy/install-unit.sh` — the systemd launcher, the tracker that says whether
+  anything is actually serving, and the installer for both.
+- `files/build_draft_vocab_union.py` and `files/draft_vocab_es_en_code_32k.txt` —
+  the shipped reduced draft vocabulary and the script that rebuilds it.
 - `scripts/supervise.sh` + `systemd/qwen38-flash-*.service/timer` — the 24/7
   supervisor, weekly maintenance relaunch, daily heartbeat, and `OnFailure=`
   alert target (see [Unattended operation](#unattended-operation)).
@@ -1285,6 +1319,14 @@ sparkDash's own figures include any other traffic on the port.
   launch. With both, identical requests give bit-identical logits (0 of 1,742
   positions differ; before, median 0.19 and max 4.8 nats), NLL unchanged,
   decode within noise, prefill -3.4% at 47k tokens.
+  **On the pinned image only one of the two flags does anything.**
+  `VLLM_MOE_DET_FINALIZE=1` is live — `patch_determinism.py` mounts the patched
+  `flashinfer_cutlass_moe.py` and every launch logs it — but `VLLM_QSA_DET_TOPK=1`
+  needs a compiled kernel `.so` the image does not carry, so the QSA top-k
+  non-determinism stays and the bit-identical result above is not reproducible
+  there. Two runs of one configuration can differ, which is why the smoke test's
+  determinism check is WARN-only; setting the flag and expecting identical output
+  cost one invalid experiment on 2026-09-28.
 
 ## Credits
 
