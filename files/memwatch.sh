@@ -49,6 +49,32 @@
 CONTAINER="${1:?container}"; MIN_GIB="${2:-6}"; CONSEC="${3:-5}"
 MIN_FREE_GIB="${MEMWATCH_MIN_FREE_GIB:-2}"
 FREE_GATE_GIB="${MEMWATCH_FREE_GATE_GIB:-10}"
+# Co-tenant awareness. scripts/supervise.sh already steps aside while ComfyUI is
+# up (its "port thief" check); this watchdog did not, and on 2026-09-28 that cost
+# a healthy server: a deliberate Qwen-Image generation peaked at 111.6 of
+# 121.63 GiB -- 10 GiB spare -- and MemFree dipped to 1.2 GiB because the PLE
+# table's page cache holds the rest and cannot be evicted while mapped
+# (posix_fadvise(DONTNEED) on it returned 0.3 of 10.8 GiB, measured). The
+# MemFree floor fired with MemAvailable at 8.2 GiB and the generation finished
+# fine. So while a named co-tenant is up, the MemFree floor is suspended and
+# says so once; the MemAvailable floor -- the one that means memory is actually
+# gone -- keeps acting. Empty MEMWATCH_COTENANT restores the old behaviour.
+COTENANT="${MEMWATCH_COTENANT-comfyui}"
+COTENANT_UNITS="${MEMWATCH_COTENANT_UNITS-comfy-h3.service}"
+
+cotenant_up() {   # container name substring, then the units the supervisor checks
+    [[ -z "$COTENANT" && -z "$COTENANT_UNITS" ]] && return 1
+    if [[ -n "$COTENANT" ]] && \
+       [[ -n "$(docker ps --filter "name=$COTENANT" --filter status=running -q 2>/dev/null)" ]]; then
+        return 0
+    fi
+    local u
+    for u in $COTENANT_UNITS; do
+        systemctl is-active "$u" >/dev/null 2>&1 && return 0
+        systemctl --user is-active "$u" >/dev/null 2>&1 && return 0
+    done
+    return 1
+}
 GRACE="${MEMWATCH_GRACE:-30}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
@@ -63,7 +89,9 @@ NEAR_FREE_KB=$(( MIN_FREE_KB + 1048576 ))  # verbose band: free floor + 1 GiB
 
 echo "$(date '+%F %T') watchdog start: container=$CONTAINER" \
      "floors: MemAvailable<${MIN_GIB}GiB, MemFree<${MIN_FREE_GIB}GiB (while MemAvailable<${FREE_GATE_GIB}GiB);" \
-     "trigger=${CONSEC} consecutive samples; grace=${GRACE}s; archive=$ARCHIVE_DIR"
+     "trigger=${CONSEC} consecutive samples; grace=${GRACE}s; archive=$ARCHIVE_DIR;" \
+     "co-tenant suspends the MemFree floor: container ~'${COTENANT:-none}', units '${COTENANT_UNITS:-none}'"
+cotenant_noted=0
 
 archive_logs() {  # <timestamp>
     mkdir -p "$ARCHIVE_DIR"
@@ -145,13 +173,25 @@ while docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}\$"; do
         (( below_avail > 0 )) && echo "$(date '+%T') recovered after ${below_avail} sub-floor MemAvailable sample(s): MemAvailable=$((avail/1024)) MiB"
         below_avail=0
     fi
-    if (( free < MIN_FREE_KB && avail < FREE_GATE_KB )); then
+    if (( free < MIN_FREE_KB && avail < FREE_GATE_KB )) && cotenant_up; then
+        # Suspended, not ignored: this is the operator's own co-tenant, and the
+        # MemAvailable floor above still covers real exhaustion.
+        if [[ "$cotenant_noted" != "1" ]]; then
+            cotenant_noted=1
+            echo "$(date '+%F %T') MemFree floor SUSPENDED while a co-tenant is up (MemFree=$((free/1024)) MiB, MemAvailable=$((avail/1024)) MiB). MemAvailable<${MIN_GIB}GiB still stops the container."
+        fi
+        below_free=0
+    elif (( free < MIN_FREE_KB && avail < FREE_GATE_KB )); then
         below_free=$(( below_free + 1 ))
         echo "$(date '+%F %T') below MemFree floor ${below_free}/${CONSEC}: MemFree=$((free/1024)) MiB MemAvailable=$((avail/1024)) MiB"
         (( below_free >= CONSEC )) && stop_container "MemFree under ${MIN_FREE_GIB} GiB for ${CONSEC} samples"
     else
         (( below_free > 0 )) && echo "$(date '+%T') recovered after ${below_free} sub-floor MemFree sample(s): MemFree=$((free/1024)) MiB"
         below_free=0
+        if [[ "$cotenant_noted" == "1" ]] && ! cotenant_up; then
+            cotenant_noted=0
+            echo "$(date '+%F %T') MemFree floor back in force: the co-tenant is gone."
+        fi
     fi
 
     if (( tick % 10 == 0 )); then

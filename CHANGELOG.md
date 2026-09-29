@@ -5,6 +5,49 @@ are grouped by date, newest first. Every measurement named here was taken on the
 one DGX Spark this repo is written for — treat them as that host's numbers, not
 as promises.
 
+## 2026-09-30 (the watchdog learns what the supervisor already knew)
+
+- **`files/memwatch.sh` suspends its MemFree floor while a co-tenant is up, and
+  that is what makes ComfyUI and the server coexist.** `scripts/supervise.sh`
+  already steps aside for ComfyUI (its "port thief" check); the watchdog did not,
+  and on 2026-09-28 that cost a healthy server: a deliberate Qwen-Image generation
+  peaked at 111.6 of 121.63 GiB -- 10 GiB spare, `NV_ERR_NO_MEMORY` count 0 at
+  that moment -- while MemFree dipped to 1.2 GiB, because the PLE table's page
+  cache holds the rest and cannot be evicted while it is mapped
+  (`posix_fadvise(DONTNEED)` on the 50 GB blob returned 0.3 of 10.8 GiB, measured
+  2026-09-30). `MEMWATCH_COTENANT` (container name substring, default `comfyui`)
+  and `MEMWATCH_COTENANT_UNITS` (default `comfy-h3.service`, both scopes) select
+  it; empty restores the old behaviour. The MemAvailable floor -- the one that
+  means memory is actually gone -- keeps acting.
+
+  Measured with both up: two generations at 1024x1024/12 steps (25 s) and
+  1328x1328/20 steps (65 s) with the server answering throughout, MemFree down to
+  0.80 GiB and a median of 1.12, MemAvailable never below 7.33 against its 6 GiB
+  floor, repo smoke 8/0/1. The log line the run turned on reads
+  `MemFree floor SUSPENDED while a co-tenant is up (MemFree=1954 MiB,
+  MemAvailable=9178 MiB)`; without it those samples would have stopped the
+  container.
+
+  **The residual risk is real and named:** 12 `NV_ERR_NO_MEMORY` in the kernel log
+  over the 20 minutes of those two generations. Nothing broke, MemAvailable kept
+  1.33 GiB of margin over the floor, and the driver recovered every time -- but
+  that is the signature NVIDIA/open-gpu-kernel-modules#1358 describes before a
+  whole-host wedge, and a bigger generation would cross the MemAvailable floor,
+  at which point the watchdog stops the server as designed.
+
+- **Coexistence and `MAX_NUM_BATCHED_TOKENS=8192` compete for the same memory.**
+  The prefill knob raised the driver's footprint by ~4.5 GiB of headroom at idle
+  (MemAvailable 19.5 -> 13.3), and ComfyUI then died at startup with
+  `CUDA error: out of memory` before loading anything. Back at 2048 the same
+  ComfyUI launch and both generations succeed. The knob's TTFT win (-13.7% at 64k)
+  is not compatible with a co-tenant on this host; coexistence was the
+  requirement, so 2048 stays.
+
+- **`unsloth/Qwen-Image-2.1-GGUF` is not usable in ComfyUI:** `UnetLoaderGGUF`
+  rejects every quant with `Unknown model architecture!`. The official
+  `Comfy-Org/Qwen-Image-2.1` repackage works -- `qwen_image_2.1_int8_convrot`
+  (7.26 GB) with `qwen3vl_8b_w4a8` (6.31 GB) and the bf16 VAE.
+
 ## 2026-09-29 (the kernel VM tunables are not adoptable here, measured)
 
 - **`files/sysctl-spark3.conf` applied cleanly and took the server down in 90
