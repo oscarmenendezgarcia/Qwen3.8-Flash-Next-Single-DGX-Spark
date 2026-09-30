@@ -5,6 +5,40 @@ are grouped by date, newest first. Every measurement named here was taken on the
 one DGX Spark this repo is written for — treat them as that host's numbers, not
 as promises.
 
+## 2026-09-30 (image editing fits, and it was never the packaging)
+
+- **`KV_TARGET_GIB` 20 -> 9 is what made editing coexist with serving.** Editing a
+  960x1280 photo at `resolution: 1024` crossed the watchdog's MemAvailable floor
+  three times and cost ComfyUI three sheds; at 9 it completes in 125 s with the
+  low-water mark at **7.36 GiB against a predicted ~7.4**, the server answering
+  throughout. Pool 764,464 -> 591,654 tokens, 2.26x concurrency at a 262k context,
+  still 7.7x this host's 77k-token average request.
+
+- **Three cheaper explanations were tested and refuted first, which is why the
+  fourth was predictable.** The peak is activations, not weights:
+
+  | | low-water MemAvailable |
+  |---|---|
+  | int8 transformer (7.26 GB), `--reserve-vram 12` | 4.90 |
+  | int8, `--reserve-vram 2` | 4.90 |
+  | **int4 transformer (3.67 GB)** | **4.92** |
+  | int8 at `resolution: 768` | 6.96 |
+
+  Halving the transformer moved the floor by 0.02 GiB. Only resolution moves it,
+  because what allocates is the VL tower over the reference image and the edit's
+  latents. `HOST_RESERVE_GIB=34`, tried earlier, bought 0.12 GiB for 227,000
+  tokens -- it was measured against a *generation*, which fits anyway, and
+  ComfyUI's own `--reserve-vram` target capped the gain.
+
+- **The community's advice does not apply to unified memory.** Every ComfyUI
+  Qwen-Image OOM thread recommends `--lowvram` / offload-to-RAM, which on an 8-24
+  GB card frees VRAM. Here CPU and GPU are the same 121.63 GiB: ComfyUI was doing
+  that dance ("offload device: cpu", async weight offloading) for nothing, and
+  removing it changed the peak by zero. Editing costs ~11 GiB of anon against
+  ~2.8 for generation, because the encoder, the transformer and the VAE are
+  resident together -- text-to-image can free the encoder before loading the
+  transformer.
+
 ## 2026-09-30 (the load leaves 12-15 GiB of dead page cache; start.sh returns it)
 
 - **What blocked coexistence was not how much memory the server held, it was that
