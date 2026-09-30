@@ -108,7 +108,7 @@ _CLI_READY_TIMEOUT_S="${READY_TIMEOUT_S:-}"
 # Knobs that are NOT read through an explicit _CLI_ variable above still have
 # to honour "environment > .env": sourcing .env would otherwise overwrite them.
 # Snapshot anything set in the environment, then restore it after the source.
-_ENV_SNAPSHOT_VARS=(KV_TARGET_GIB HOST_RESERVE_GIB HOST_SLACK_GIB OS_RESERVE_GIB
+_ENV_SNAPSHOT_VARS=(FREE_LOAD_CACHE KV_TARGET_GIB HOST_RESERVE_GIB HOST_SLACK_GIB OS_RESERVE_GIB
                     MEMWATCH_MIN_GIB MEMWATCH_MIN_FREE_GIB MEMWATCH_FREE_GATE_GIB MEMWATCH_GRACE
                     OVERHEAD_GIB PLE_GIB CONTAINER_MEM_GIB KV_CACHE_MEMORY
                     MAMBA_SSM_CACHE_DTYPE
@@ -1370,6 +1370,14 @@ while true; do
         kill $LOGPID 2>/dev/null || true
         echo ""
         ok "vLLM ready on port $PORT (TP=1, single Spark) after ${ELAPSED}s."
+    # The ~71 GiB of shards the load just read through the page cache are dead
+    # weight now: nothing reads them again, and the stock kernel will not evict
+    # them on its own. Returning them is what lets the NVIDIA driver -- and any
+    # co-tenant that needs a CUDA context -- find genuinely free pages.
+    # FREE_LOAD_CACHE=0 keeps the old behaviour.
+    if [[ "${FREE_LOAD_CACHE:-1}" == "1" && -x "$SCRIPT_DIR/scripts/free-load-cache.sh" ]]; then
+        "$SCRIPT_DIR/scripts/free-load-cache.sh" "$MODEL_PATH/$SNAPSHOT_REL" 2>&1 | sed 's/^/       /' || true
+    fi
         docker logs "$CONTAINER_NAME" 2>&1 | grep -iE "GPU KV cache size|Available KV cache|Maximum concurrency" | tail -3 || true
         # Resuming after a manual stop clears the manual stopping flag: the
         # operator's own relaunch IS the resume (stop.sh's header promise).

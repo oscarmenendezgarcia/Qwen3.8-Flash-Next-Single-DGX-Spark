@@ -5,6 +5,36 @@ are grouped by date, newest first. Every measurement named here was taken on the
 one DGX Spark this repo is written for — treat them as that host's numbers, not
 as promises.
 
+## 2026-09-30 (the load leaves 12-15 GiB of dead page cache; start.sh returns it)
+
+- **What blocked coexistence was not how much memory the server held, it was that
+  no pages were free.** ComfyUI could not create a CUDA context --
+  `cudaMemGetInfo: CUDA error: out of memory` -- with **21.8 GiB of MemAvailable
+  and 2.4 GiB of MemFree**. The driver allocates from the same unified pool and
+  cannot wait, so MemAvailable is the wrong number to look at.
+
+  Loading reads ~71 GiB of shards through the page cache and nothing reads them
+  again; the stock kernel keeps a 44 MB free-page floor, so it never evicts them.
+  `scripts/free-load-cache.sh`, now called by start.sh once the server answers
+  (`FREE_LOAD_CACHE=0` opts out), returns them: **MemFree 4.97 -> 16.79 GiB
+  (+11.82)** on the launch that shipped it, with the server serving throughout.
+  ComfyUI then started and saw 10.5 GiB of free VRAM where it had seen 0.8.
+
+  It is a once-per-launch gesture, not maintenance: a second pass minutes later
+  freed exactly nothing (MemFree 6.70 -> 6.70). The PLE table is excluded on
+  purpose -- vLLM keeps it mapped and reads it at random every token, so
+  `DONTNEED` on it frees 0.3 of 10.8 GiB and evicting the rest would only buy
+  re-reads from SSD.
+
+- **Raising `HOST_RESERVE_GIB` to 34 bought nothing and was reverted.** The
+  reasoning was that the KV pool is over-provisioned for this host's real traffic
+  (77k-token prompts against a pool that holds 9 of them). It is, but the memory
+  does not reach the co-tenant: at reserve 34 the worst moment of a 1328x1328
+  generation left **7.50 GiB** of MemAvailable against **7.38 GiB** at reserve 30
+  -- 0.12 GiB of margin for 227,000 tokens of pool. ComfyUI takes what it finds;
+  the kernel turns the rest into page cache. Back at 30, where the pool measures
+  764,464 tokens.
+
 ## 2026-09-30 (the watchdog sheds the guest before the host)
 
 - **Eight generations back to back cost the server 50 minutes, so the watchdog now
