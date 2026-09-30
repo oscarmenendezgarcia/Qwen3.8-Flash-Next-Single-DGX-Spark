@@ -5,6 +5,43 @@ are grouped by date, newest first. Every measurement named here was taken on the
 one DGX Spark this repo is written for — treat them as that host's numbers, not
 as promises.
 
+## 2026-09-30 (the watchdog sheds the guest before the host)
+
+- **Eight generations back to back cost the server 50 minutes, so the watchdog now
+  stops the co-tenant first.** Suspending the MemFree floor (entry below) was
+  enough for two generations with a gap; a burst of eight between 09:36 and 09:45
+  -- an agent on another machine iterating on the workflow format, one full
+  generation per attempt -- walked anon memory up step by step until MemAvailable
+  crossed its 6 GiB floor at 09:46, with 32 `NV_ERR_NO_MEMORY` accumulated. That
+  floor firing is correct: memory really had run out. What was wrong is which
+  container it stopped.
+
+  `stop_container()` now calls `shed_cotenant()` first: it stops the co-tenant,
+  waits up to `MEMWATCH_COTENANT_RECOVER_S` (60) for MemAvailable to climb a GiB
+  above the floor, and only falls through to stopping the protected container if
+  it does not. A burst then costs an aborted generation instead of the model.
+  Alerts fire either way, naming which container was shed.
+
+- **Launch order matters, and start.sh enforces it.** `REQUIRE_IDLE_GPU` refuses
+  to launch while anything else holds the GPU, so with ComfyUI up the server
+  cannot be restarted: ComfyUI must come down, the server up, then ComfyUI back.
+  This is how the 50-minute outage became 50 minutes rather than 4 -- the first
+  restore attempt hit the preflight and stopped.
+
+- **Editing works, and the reference image is passed in a way that fails
+  silently if you get it wrong.** `TextEncodeQwenImage21` takes its reference
+  images through an autogrow input whose API key is **`images.image_1`**, with
+  the dot. `images` as a list, `images` as a dict of the same name, and a flat
+  `image_1` were all accepted (the last one errors at execute; the first two
+  return `success`) and produced a fresh image from the prompt with no trace of
+  the reference. Four generations went into finding that; the template shipped in
+  the image (`image_qwen_image_2_1_image_edit.json`) names the socket.
+
+  The encoder for editing is the same `qwen3vl_8b_w4a8` -- it is a VL model and
+  sees images natively. `qwen3.5_9b_qwen_image_2.1_pe_i2i` is a prompt-enhancement
+  model, not an encoder: loaded as CLIP it produces noise. 9.47 GB downloaded for
+  nothing, recorded so nobody repeats it.
+
 ## 2026-09-30 (the watchdog learns what the supervisor already knew)
 
 - **`files/memwatch.sh` suspends its MemFree floor while a co-tenant is up, and

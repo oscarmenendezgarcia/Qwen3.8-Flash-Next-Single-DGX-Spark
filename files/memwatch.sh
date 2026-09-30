@@ -61,6 +61,9 @@ FREE_GATE_GIB="${MEMWATCH_FREE_GATE_GIB:-10}"
 # gone -- keeps acting. Empty MEMWATCH_COTENANT restores the old behaviour.
 COTENANT="${MEMWATCH_COTENANT-comfyui}"
 COTENANT_UNITS="${MEMWATCH_COTENANT_UNITS-comfy-h3.service}"
+# Seconds to wait for MemAvailable to climb back after shedding the co-tenant,
+# before falling through to stopping the protected container anyway.
+COTENANT_RECOVER_S="${MEMWATCH_COTENANT_RECOVER_S:-60}"
 
 cotenant_up() {   # container name substring, then the units the supervisor checks
     [[ -z "$COTENANT" && -z "$COTENANT_UNITS" ]] && return 1
@@ -100,7 +103,38 @@ archive_logs() {  # <timestamp>
     echo "$(date '+%F %T') archived container log + watchdog log to $ARCHIVE_DIR/${CONTAINER}-$1-*.log"
 }
 
+shed_cotenant() {  # <reason>; 0 = shed and memory recovered, 1 = nothing to shed or it did not help
+    local names
+    names=$(docker ps --filter "name=$COTENANT" --filter status=running --format '{{.Names}}' 2>/dev/null)
+    [[ -z "$COTENANT" || -z "$names" ]] && return 1
+    echo "$(date '+%F %T') shedding co-tenant(s) [$names] before touching $CONTAINER: $1"
+    if [[ -x "$REPO_DIR/scripts/alert.sh" ]]; then
+        "$REPO_DIR/scripts/alert.sh" "memwatch shed co-tenant [$names] to protect $CONTAINER: $1" || true
+    fi
+    docker stop -t 10 $names >/dev/null 2>&1 || docker kill $names >/dev/null 2>&1
+    local waited=0 a
+    while (( waited < COTENANT_RECOVER_S )); do
+        sleep 3; waited=$(( waited + 3 ))
+        a=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+        if (( a > MIN_KB + 1048576 )); then
+            echo "$(date '+%F %T') co-tenant shed worked: MemAvailable=$((a/1024)) MiB after ${waited}s. $CONTAINER left running."
+            return 0
+        fi
+    done
+    echo "$(date '+%F %T') co-tenant shed did not recover memory in ${COTENANT_RECOVER_S}s (MemAvailable=$((a/1024)) MiB); stopping $CONTAINER as well."
+    return 1
+}
+
 stop_container() {  # <reason>
+    # The co-tenant is the guest; this container is what the box is for. Shedding
+    # the guest first turns a burst of image generations -- eight back to back on
+    # 2026-09-30 took MemAvailable under the floor and cost the server 50 minutes
+    # -- into an aborted generation instead of a stopped model.
+    if shed_cotenant "$1"; then
+        below_avail=0
+        below_free=0
+        return 0
+    fi
     local ts; ts=$(date '+%Y%m%dT%H%M%S')
     echo "$(date '+%F %T') $1 -> stopping $CONTAINER"
     archive_logs "$ts"
