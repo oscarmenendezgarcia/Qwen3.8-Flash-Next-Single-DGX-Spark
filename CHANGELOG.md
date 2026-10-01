@@ -5,6 +5,22 @@ are grouped by date, newest first. Every measurement named here was taken on the
 one DGX Spark this repo is written for — treat them as that host's numbers, not
 as promises.
 
+## 2026-10-01 (the liveness tracker re-attaches instead of latching failed)
+
+- **Needing a root `systemctl start` after every relaunch was a defect, not a
+  constraint.** The tracker only knew how to die: `./stop.sh` then `./start.sh`
+  -- the path README documents and the one supervise.sh and
+  maintenance-relaunch.sh take -- left it `failed` with a healthy server behind
+  it, and only root could clear it. That happened five times on 2026-09-30.
+
+  `scripts/wait-container.sh` now waits for the container instead of giving up
+  (`WAIT_FOR_CONTAINER_S`, 1800), and the unit carries `Restart=on-failure`
+  with `RestartSec=30` and no start-limit burst. A stop still costs exactly one
+  alert, which is correct -- the container did stop -- and 30 s later the tracker
+  comes back, waits, and re-attaches when the server is up. Verified end to end:
+  waits, attaches 10 s later when the container appears, exits 1 when it dies,
+  and exits 2 if it never appears.
+
 ## 2026-09-30 (image editing fits, and it was never the packaging)
 
 - **`KV_TARGET_GIB` 20 -> 9 is what made editing coexist with serving.** Editing a

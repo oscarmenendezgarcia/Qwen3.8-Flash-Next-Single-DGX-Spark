@@ -29,10 +29,23 @@ if [[ -z "$C" && -f .env ]]; then
 fi
 C="${C:-vllm-fn-tp1}"
 
-if ! docker inspect "$C" >/dev/null 2>&1; then
-    echo "container $C does not exist" >&2
-    exit 2
-fi
+# Wait for it rather than giving up. The operator's own path is ./stop.sh then
+# ./start.sh (README, supervise.sh, maintenance-relaunch.sh), which never touches
+# systemd, so without this the unit latched `failed` after every relaunch and
+# needed a root `systemctl start` to clear -- five times on 2026-09-30 alone.
+# With Restart=on-failure on the unit, a stop now costs one alert (correct: the
+# container did stop) and the tracker re-attaches by itself when it comes back.
+WAIT_S="${WAIT_FOR_CONTAINER_S:-1800}"
+waited=0
+while ! docker inspect "$C" >/dev/null 2>&1; do
+    if (( waited >= WAIT_S )); then
+        echo "container $C has not appeared in ${WAIT_S}s" >&2
+        exit 2
+    fi
+    (( waited == 0 )) && echo "container $C is not up; waiting up to ${WAIT_S}s for it"
+    sleep 5; waited=$(( waited + 5 ))
+done
+(( waited > 0 )) && echo "container $C appeared after ${waited}s"
 echo "tracking $C; this unit stays active while it runs"
 code="$(docker wait "$C" 2>/dev/null)" || { echo "docker wait failed for $C" >&2; exit 2; }
 echo "container $C stopped on its own (exit $code) -- nothing is serving" >&2

@@ -36,6 +36,10 @@ Documentation=file://@RECIPE_DIR@/README.md
 After=flashnext-vllm.service
 PartOf=flashnext-vllm.service
 OnFailure=flashnext-alert@%n.service
+# A server that stays down should keep saying so rather than hit the start-limit
+# burst and go quiet; the restart loop below is a watcher re-attaching, not a
+# service being resurrected.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -43,6 +47,11 @@ User=@RUN_USER@
 WorkingDirectory=@RECIPE_DIR@
 Environment=HOME=@HOME_DIR@
 ExecStart=@RECIPE_DIR@/scripts/wait-container.sh
-# Never restart: a dead container is a fact to report, not to paper over, and
-# relaunching here would fight both the watchdog that stopped it and stop.sh.
-Restart=no
+# Restart to re-attach, not to resurrect anything: the script only watches. A
+# stop still costs exactly one alert (the failure that triggers OnFailure), and
+# 30 s later the tracker comes back and waits for the container, so the operator's
+# ./stop.sh + ./start.sh no longer leaves a unit latched `failed` that only root
+# could clear. StartLimitIntervalSec=0 because a server that stays down should
+# keep saying so rather than hit a burst limit and go quiet.
+Restart=on-failure
+RestartSec=30
