@@ -46,7 +46,14 @@ Wants=flashnext-vllm-alive.service
 # hand-launched peer that systemd never learned about still cannot wedge the box.
 # Conflicts= can only name UNITS, so list whatever other model services
 # exist on your box. Uncomment and edit:
-#Conflicts=my-other-model.service my-second-model.service
+# Filled in for this host on 2026-10-06, after the cost of leaving it commented:
+# the box rebooted at 00:27 after two months of uptime, systemd started
+# nemotron-vllm.service and qwen38-dflash.service alongside this one, and with
+# 86.32 of 121.63 GiB free the engine refused to initialise
+# (ValueError: Free memory on device cuda:0 ... less than desired GPU memory
+# utilization). Nothing retried, so the server stayed down nine hours. Conflicts=
+# would have stopped both before this unit started.
+Conflicts=nemotron-vllm.service qwen38-dflash.service
 
 [Service]
 Type=oneshot

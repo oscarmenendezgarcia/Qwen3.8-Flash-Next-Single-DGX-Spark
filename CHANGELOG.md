@@ -36,6 +36,30 @@ as promises.
   have had no reviewer since September. Leaving them costs nothing and the content
   may still land in someone's fork.
 
+- **Nine hours down, and the cause was a reboot with three model units enabled.**
+  The box rebooted at 00:27 on 2026-10-06 after two months of uptime (no shutdown
+  sequence in the journal, empty pstore, no driver errors that night -- the reboot
+  itself is still unexplained). systemd then started `nemotron-vllm.service` and
+  `qwen38-dflash.service` next to this one, and with 86.32 of 121.63 GiB free the
+  engine refused to initialise: `ValueError: Free memory on device cuda:0 ... less
+  than desired GPU memory utilization`. Nothing retried, so it stayed down until
+  08:50. Three changes, all live:
+  - `deploy/flashnext-vllm.service` now carries a real `Conflicts=nemotron-vllm.service
+    qwen38-dflash.service` instead of the commented-out example. `Conflicts=` stops
+    the named units before starting this one, which is exactly the missing step.
+  - `nemotron-vllm.service` is disabled. It was enabled from an evaluation in
+    August and nothing has needed it since.
+  - `scripts/wait-container.sh` waited on the wrong condition. `docker inspect`
+    succeeds on a *stopped* container, so the loop never engaged and fell through
+    to `docker wait`, which returns at once for an exited container; the unit then
+    failed every `RestartSec`. It emitted **1,059 alerts** over those nine hours.
+    It now waits for `.State.Running` to be true.
+
+  Diagnosing this took three attempts -- memwatch was blamed first and was not
+  involved, then "the restart failed", and only `last reboot` showed what actually
+  happened. Worth remembering that the first plausible culprit here was the wrong
+  one twice running.
+
 ## 2026-10-01 (the liveness tracker re-attaches instead of latching failed)
 
 - **Needing a root `systemctl start` after every relaunch was a defect, not a

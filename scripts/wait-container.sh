@@ -37,12 +37,17 @@ C="${C:-vllm-fn-tp1}"
 # container did stop) and the tracker re-attaches by itself when it comes back.
 WAIT_S="${WAIT_FOR_CONTAINER_S:-1800}"
 waited=0
-while ! docker inspect "$C" >/dev/null 2>&1; do
+# RUNNING, not merely present: `docker inspect` succeeds on a stopped container,
+# so the first version of this loop never engaged -- it fell straight through to
+# `docker wait`, which returns at once for an exited container, and the unit
+# failed every RestartSec. That emitted 1,059 alerts over nine hours on
+# 2026-10-06 while the server was down for an unrelated reason.
+while [[ "$(docker inspect -f '{{.State.Running}}' "$C" 2>/dev/null)" != "true" ]]; do
     if (( waited >= WAIT_S )); then
-        echo "container $C has not appeared in ${WAIT_S}s" >&2
+        echo "container $C has not come up in ${WAIT_S}s" >&2
         exit 2
     fi
-    (( waited == 0 )) && echo "container $C is not up; waiting up to ${WAIT_S}s for it"
+    (( waited == 0 )) && echo "container $C is not running; waiting up to ${WAIT_S}s for it"
     sleep 5; waited=$(( waited + 5 ))
 done
 (( waited > 0 )) && echo "container $C appeared after ${waited}s"
