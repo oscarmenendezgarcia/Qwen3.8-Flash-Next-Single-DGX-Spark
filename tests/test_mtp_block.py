@@ -20,7 +20,8 @@ spec = importlib.util.spec_from_file_location("mtp_block", SRC)
 mtp_block = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mtp_block)
 
-# Checkpoint values (Mia-AiLab/Qwen3.8-Flash-Next-NVFP4 config.json).
+# Checkpoint values (nvidia/Qwen3.8-Flash-Next-NVFP4 config.json; verified
+# there 2026-10-06 — see tests/test_ple_staging_width.py).
 CFG = {"text_config": {
     "linear_key_head_dim": 128, "linear_num_key_heads": 16,
     "linear_value_head_dim": 128, "linear_num_value_heads": 48,

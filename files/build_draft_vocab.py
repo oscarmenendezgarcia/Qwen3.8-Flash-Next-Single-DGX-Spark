@@ -60,7 +60,7 @@ def main() -> None:
     ap.add_argument("corpus", nargs="+",
                     help="corpus files, each optionally suffixed :N to repeat it N times")
     ap.add_argument("--model", default=os.environ.get(
-        "DRAFT_VOCAB_MODEL", "Mia-AiLab/Qwen3.8-Flash-Next-NVFP4"))
+        "DRAFT_VOCAB_MODEL", "nvidia/Qwen3.8-Flash-Next-NVFP4"))
     ap.add_argument("--out", default="draft_vocab.txt")
     ap.add_argument("--size", type=int, default=32768)
     ap.add_argument("--report-only", action="store_true")

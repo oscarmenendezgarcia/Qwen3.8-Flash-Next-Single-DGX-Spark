@@ -137,7 +137,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("vocab", help="draft vocabulary file, one token id per line")
     ap.add_argument("--model", default=os.environ.get(
-        "DRAFT_VOCAB_MODEL", "Mia-AiLab/Qwen3.8-Flash-Next-NVFP4"))
+        "DRAFT_VOCAB_MODEL", "nvidia/Qwen3.8-Flash-Next-NVFP4"))
     ap.add_argument("--min-coverage", type=float, default=99.0,
                     help="fail if any language is below this %% of words (default 99)")
     ap.add_argument("--words", action="append", default=[], metavar="LANG=FILE",

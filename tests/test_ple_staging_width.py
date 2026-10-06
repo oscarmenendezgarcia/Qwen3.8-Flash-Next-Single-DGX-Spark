@@ -26,7 +26,9 @@ import torch
 REPO = Path(__file__).resolve().parent.parent
 PLE_SRC = REPO / "files" / "ple_layer_patched.py"
 WORKER_SRC = REPO / "files" / "ple_offload" / "worker.py"
-# Checkpoint values (Mia-AiLab/Qwen3.8-Flash-Next-NVFP4 config.json).
+# Checkpoint values (nvidia/Qwen3.8-Flash-Next-NVFP4 config.json; verified
+# there 2026-10-06, when the Mia-AiLab mirror these came from stopped
+# resolving — every value below is byte-identical in both).
 NGRAM_SIZE, HEADS_PER_NGRAM, EMBED_DIM = 3, 8, 2560
 VOCAB, EOS = 248320, 248044
 HEADS = (NGRAM_SIZE - 1) * HEADS_PER_NGRAM              # 16

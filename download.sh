@@ -52,7 +52,8 @@ ABLIT="${ABLIT:-0}"
 [[ -n "$_CLI_TP1_MODEL_ID" ]] && TP1_MODEL_ID="$_CLI_TP1_MODEL_ID"
 VERIFY_SHA256="${_CLI_VERIFY_SHA256:-${VERIFY_SHA256:-1}}"
 
-STOCK_MODEL_ID="Mia-AiLab/Qwen3.8-Flash-Next-NVFP4"
+# 2026-10-06: see start.sh — the Mia-AiLab repo no longer resolves (401/404).
+STOCK_MODEL_ID="nvidia/Qwen3.8-Flash-Next-NVFP4"
 ABLIT_MODEL_ID="drowzeys/keys-Qwen3.8-flash-next-ablit-Mia-Single-Spark-only"
 if [[ $# -gt 0 ]]; then
     MODEL_ID="$1"

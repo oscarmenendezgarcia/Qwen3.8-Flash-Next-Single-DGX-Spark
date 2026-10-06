@@ -19,7 +19,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--base", required=True, help="vocabulario de upstream (suelo)")
 ap.add_argument("--corpus", nargs="+", required=True, help="ficheros de texto; sufijo :N para repetir")
 ap.add_argument("--size", type=int, default=65536)
-ap.add_argument("--model", default="Mia-AiLab/Qwen3.8-Flash-Next-NVFP4")
+ap.add_argument("--model", default="nvidia/Qwen3.8-Flash-Next-NVFP4")
 ap.add_argument("--byte-fallback-max", type=int, default=400,
                 help="todo id por debajo de esto se conserva siempre")
 ap.add_argument("--out", required=True)
