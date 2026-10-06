@@ -4,7 +4,7 @@
 # ============================================================================
 # tp1/start.sh — Single-node, single-GPU (TP=1) vLLM launch on ONE DGX Spark.
 #
-# Serves the Mia-AiLab NVFP4 checkpoint — MXFP8 attention + a 4-bit NVFP4 PLE
+# Serves the NVFP4 checkpoint — MXFP8 attention + a 4-bit NVFP4 PLE
 # table. ABLIT=1 in .env switches to the gated Keys checkpoint
 # (drowzeys/keys-Qwen3.8-flash-next-ablit-Mia-Single-Spark-only): same Mia
 # 34-shard layout, QSA self_attn.o_proj replaced at L15/19/23/27/31/35/39/43/47.
