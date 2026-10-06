@@ -1,17 +1,23 @@
 <h1 align="center">Qwen3.8-Flash-Next on ONE DGX Spark (TP=1)</h1>
 
 <p align="center">
-  <sub>by <a href="https://x.com/MiaAI_lab">Mia'a AI Lab</a></sub>
-  <br><br>
-  <a href="https://github.com/sponsors/MiaAI-Lab" target="_blank" rel="noopener noreferrer" style="display:inline-block;margin:0 8px;vertical-align:middle;"><img src="https://img.shields.io/badge/Sponsor%20me%20on%20GitHub-181717?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="Sponsor me on GitHub" height="28" style="height:28px;width:auto;vertical-align:middle;border:0;" /></a>
-  <a href="https://x.com/MiaAI_lab" target="_blank" rel="noopener noreferrer" style="display:inline-block;margin:0 8px;vertical-align:middle;"><img src="https://img.shields.io/badge/Follow%20me%20on%20X-000000?style=for-the-badge&logo=x&logoColor=white" alt="Follow Mia on X" height="28" style="height:28px;width:auto;vertical-align:middle;border:0;" /></a>
+  <sub>Originally by <a href="https://x.com/MiaAI_lab">Mia's AI Lab</a> — independently maintained here since October 2026</sub>
 </p>
 
-Self-contained recipe for serving the `Mia-AiLab/Qwen3.8-Flash-Next-NVFP4`
+Self-contained recipe for serving the `nvidia/Qwen3.8-Flash-Next-NVFP4`
 checkpoint (99 GiB) from a single DGX Spark's 121 GiB unified memory, via vLLM
 with the PLE table offloaded and memory-mapped. This is a **vision-language**
 model: text, images and video all work out of the box (see below). Nothing here depends on the
 2-node files it was derived from.
+
+> **On provenance.** This started as a fork of
+> [MiaAI-Lab/Qwen3.8-Flash-Next-Single-DGX-Spark](https://github.com/MiaAI-Lab/Qwen3.8-Flash-Next-Single-DGX-Spark)
+> and keeps their copyright notices, as the AGPL requires. In October 2026 that
+> project redirected its readers to TensorFold and its default checkpoint stopped
+> resolving, so this copy is now maintained on its own: the fixes, measurements
+> and corrections recorded in `CHANGELOG.md` from that date are ours, and every
+> number in this README was measured on the one DGX Spark it is written for.
+> Nothing here is endorsed by or coordinated with the original authors.
 
 ```
 cp .env.sample .env        # edit IMAGE / HF_TOKEN if needed
