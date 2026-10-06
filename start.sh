@@ -138,7 +138,12 @@ done
 # ---------------------------------------------------------------------------
 # Defaults (see tp1/.env.sample for the known-good profile).
 # ---------------------------------------------------------------------------
-STOCK_MODEL_ID="Mia-AiLab/Qwen3.8-Flash-Next-NVFP4"
+# 2026-10-06: was Mia-AiLab/Qwen3.8-Flash-Next-NVFP4, which no longer resolves on
+# Hugging Face (401 here, 404 for the reporter of upstream issue #91, with every
+# spelling of the org tried). A default nobody can download is worse than no
+# default, and this host has served the NVIDIA checkpoint since 2026-09-14
+# anyway. TP1_MODEL_ID still wins when set, which is what .env does here.
+STOCK_MODEL_ID="nvidia/Qwen3.8-Flash-Next-NVFP4"
 ABLIT_MODEL_ID="drowzeys/keys-Qwen3.8-flash-next-ablit-Mia-Single-Spark-only"
 # Abliterated weights: 0 = stock Mia NVFP4, 1 = gated Keys checkpoint
 # (QSA o_proj L15/19/23/27/31/35/39/43/47). Same 0/1 pattern as YARN.

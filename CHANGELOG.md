@@ -5,6 +5,37 @@ are grouped by date, newest first. Every measurement named here was taken on the
 one DGX Spark this repo is written for — treat them as that host's numbers, not
 as promises.
 
+## 2026-10-06 (this fork goes its own way)
+
+- **Upstream has moved to TensorFold and this recipe is now the one we maintain.**
+  On 2026-10-04 MiaAI-Lab put a line at the top of their README -- "A new recipe
+  is now live, and it runs faster on TensorFold. Everyone should use that." -- and
+  pointed the rest of the document at it. The measurements that made us park that
+  lane on 2026-09-29 have not changed: its real edge is +35% decode on a single
+  stream, it is level or behind at concurrency, prefill is a tie, the KV-pool
+  advantage was taken back by fp8 KV on this lane, and its README still carries no
+  quality measurement for a 4-bit checkpoint. Nothing to do today; what changes is
+  that fixes will not arrive from there, so the patches and corrections in this
+  repo are ours to keep.
+
+- **Their default checkpoint no longer resolves.**
+  `Mia-AiLab/Qwen3.8-Flash-Next-NVFP4` returns 401 from here and 404 for the
+  reporter of their issue #91, who tried every spelling of the org with and
+  without a token while the org page itself still loads. `STOCK_MODEL_ID` now
+  points at `nvidia/Qwen3.8-Flash-Next-NVFP4`, which this host has served since
+  2026-09-14 and which answers 200. A default nobody can download is worse than no
+  default.
+
+  It also makes one deletion permanent: the 99 GB mirror of that checkpoint was
+  removed here on 2026-09-29 to free disk, and recorded as costing "a 99 GB
+  re-download" if it were ever needed. It cannot be re-downloaded.
+
+- **Our two pull requests and our issue stay open.** #57 (the 512-id byte-scan
+  comment, whose text already travels inside someone else's fork-sync PR #90),
+  #58 (the drift correction) and #85 (frequency + probe union beats the 47k floor)
+  have had no reviewer since September. Leaving them costs nothing and the content
+  may still land in someone's fork.
+
 ## 2026-10-01 (the liveness tracker re-attaches instead of latching failed)
 
 - **Needing a root `systemctl start` after every relaunch was a defect, not a
